@@ -1,6 +1,8 @@
 package org.broadinstitute.hellbender.tools.gvs.extract;
 
 import com.google.common.collect.Sets;
+import static java.util.stream.Collectors.toList;
+import htsjdk.samtools.util.CloseableIterator;
 import htsjdk.samtools.util.OverlapDetector;
 import htsjdk.variant.variantcontext.Allele;
 import htsjdk.variant.variantcontext.GenotypeBuilder;
@@ -10,6 +12,7 @@ import htsjdk.variant.variantcontext.writer.VariantContextWriter;
 import htsjdk.variant.vcf.VCFConstants;
 import htsjdk.variant.vcf.VCFHeader;
 import org.apache.avro.generic.GenericRecord;
+import org.apache.commons.lang.StringUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.broadinstitute.hellbender.engine.FeatureContext;
@@ -19,6 +22,8 @@ import org.broadinstitute.hellbender.engine.ReferenceDataSource;
 import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.tools.gvs.common.CommonCode;
+import org.broadinstitute.hellbender.tools.gvs.common.IngestConstants;
+import org.broadinstitute.hellbender.tools.gvs.common.IngestUtils;
 import org.broadinstitute.hellbender.tools.gvs.common.SchemaUtils;
 import org.broadinstitute.hellbender.tools.walkers.ReferenceConfidenceVariantContextMerger;
 import org.broadinstitute.hellbender.tools.walkers.annotator.VariantAnnotatorEngine;
@@ -56,6 +61,7 @@ public class ExtractCohortEngine {
     private final ProgressMeter progressMeter;
     private final String projectID;
     private final CommonCode.ModeEnum mode;
+    private final boolean emitPLs;
 
     /** List of sample names seen in the variant data from BigQuery. */
     private Set<String> sampleNames;
@@ -66,6 +72,8 @@ public class ExtractCohortEngine {
 
     private int totalNumberOfVariants = 0;
     private int totalNumberOfSites = 0;
+    private int totalRangeRecords = 0;
+    private int totalIrrelevantRangeRecords = 0;
 
     private final String cohortAvroFileName;
     private final String filterSetName;
@@ -75,7 +83,9 @@ public class ExtractCohortEngine {
      * This value is used to construct the genotype information of those missing samples
      * when they are merged together into a {@link VariantContext} object
      */
+    // TODO: should this be read from the data table instead, or at least parameterized?
     public static int MISSING_CONF_THRESHOLD = 60;
+    public static String INFERRED_STATE = "6";
 
 
     public ExtractCohortEngine(final String projectID,
@@ -110,6 +120,7 @@ public class ExtractCohortEngine {
         this.sampleIdToName = sampleIdToName;
         this.sampleNames = new HashSet<>(sampleIdToName.values());
         this.mode = mode;
+        this.emitPLs = emitPLs;
 
         this.cohortTableRef = cohortTableName == null || "".equals(cohortTableName) ? null :
                 new TableReference(cohortTableName, emitPLs ? SchemaUtils.COHORT_FIELDS : SchemaUtils.COHORT_FIELDS_NO_PL);
@@ -197,15 +208,28 @@ public class ExtractCohortEngine {
             logger.debug("using storage api with local sort");
         }
         logger.debug("Initializing Reader");
-        if (cohortTableRef != null){
-            final StorageAPIAvroReader storageAPIAvroReader = new StorageAPIAvroReader(cohortTableRef, rowRestriction, projectID);
-            createVariantsFromUnsortedResult(storageAPIAvroReader, fullVqsLodMap, fullYngMap, siteFilterMap, noVqslodFilteringRequested);
-        }
-        else {
-            final AvroFileReader avroFileReader = new AvroFileReader(cohortAvroFileName);
-            createVariantsFromUnsortedResult(avroFileReader, fullVqsLodMap, fullYngMap, siteFilterMap, noVqslodFilteringRequested);
+
+        // TODO: for ranges
+        //     1. we need to include "missing" ranges in the ranges table
+        //     2. rowRestriction should be end => start and start <= end (overlapping)
+        if (this.mode == CommonCode.ModeEnum.RANGES) {
+
+            // TODO: for now, just take the first two bits of the cohort table name to
+            // indicate the dataset
+            String fqDatasetName = cohortTableRef.tableProject + "." + cohortTableRef.tableDataset;
+            createVariantsFromUnsortedRangesResult(fqDatasetName, this.sampleIdToName.keySet(), minLocation, maxLocation, fullVqsLodMap, fullYngMap, siteFilterMap, noVqslodFilteringRequested);
+        } else {
+            if (cohortTableRef != null) {
+                final StorageAPIAvroReader storageAPIAvroReader = new StorageAPIAvroReader(cohortTableRef, rowRestriction, projectID);
+                createVariantsFromUnsortedResult(storageAPIAvroReader, fullVqsLodMap, fullYngMap, siteFilterMap, noVqslodFilteringRequested);
+            } else {
+                final AvroFileReader avroFileReader = new AvroFileReader(cohortAvroFileName);
+                createVariantsFromUnsortedResult(avroFileReader, fullVqsLodMap, fullYngMap, siteFilterMap, noVqslodFilteringRequested);
+            }
         }
         logger.debug("Finished Initializing Reader");
+
+        logger.info("Processed " + totalRangeRecords + " range records and rejected " + totalIrrelevantRangeRecords + " irrelevant ones ");
     }
 
 
@@ -217,11 +241,61 @@ public class ExtractCohortEngine {
                 final long firstPosition = Long.parseLong(o1.get(SchemaUtils.LOCATION_FIELD_NAME).toString());
                 final long secondPosition = Long.parseLong(o2.get(SchemaUtils.LOCATION_FIELD_NAME).toString());
 
-                return Long.compare(firstPosition, secondPosition);
+                final int result = Long.compare(firstPosition, secondPosition);
+                if (result != 0) {
+                    return result;
+                } else {
+                    final long firstSample = Long.parseLong(o1.get(SchemaUtils.SAMPLE_ID_FIELD_NAME).toString());
+                    final long secondSample = Long.parseLong(o2.get(SchemaUtils.SAMPLE_ID_FIELD_NAME).toString());
+                    return Long.compare(firstSample, secondSample);
+                }
             }
         };
         return SortingCollection.newInstance(GenericRecord.class, sortingCollectionCodec, sortingCollectionComparator, localSortMaxRecordsInRam, true);
     }
+
+    private SortingCollection<GenericRecord> addToVetSortingCollection(final SortingCollection<GenericRecord> sortingCollection, final GATKAvroReader avroReader, final BitSet positionBitSet, final long locationOffset) {
+        int recordsProcessed = 0;
+        long startTime = System.currentTimeMillis();
+
+        for (final GenericRecord queryRow : avroReader) {
+            long offset = Long.parseLong(queryRow.get(SchemaUtils.LOCATION_FIELD_NAME).toString()) - locationOffset;
+            positionBitSet.set((int) offset);
+            sortingCollection.add(queryRow);
+            if (recordsProcessed++ % 1000000 == 0) {
+                long endTime = System.currentTimeMillis();
+                logger.info("Processed " + recordsProcessed + " from BigQuery Read API in " + (endTime - startTime) + " ms");
+                startTime = endTime;
+            }
+        }
+
+        sortingCollection.printTempFileStats();
+        return sortingCollection;
+    }
+
+    private SortingCollection<GenericRecord> addToRefSortingCollection(final SortingCollection<GenericRecord> sortingCollection, final GATKAvroReader avroReader, final BitSet positionBitSet, final long locationOffset) {
+        int recordsProcessed = 0;
+        long startTime = System.currentTimeMillis();
+
+        for (final GenericRecord queryRow : avroReader) {
+            int offset = (int) (Long.parseLong(queryRow.get(SchemaUtils.LOCATION_FIELD_NAME).toString()) - locationOffset);
+            int length = Integer.parseInt(queryRow.get("length").toString());
+
+            if (!positionBitSet.get( offset, offset + length ).isEmpty()) {
+                sortingCollection.add(queryRow);
+            }
+
+            if (recordsProcessed++ % 1000000 == 0) {
+                long endTime = System.currentTimeMillis();
+                logger.info("Processed " + recordsProcessed + " from BigQuery Read API in " + (endTime - startTime) + " ms");
+                startTime = endTime;
+            }
+        }
+
+        sortingCollection.printTempFileStats();
+        return sortingCollection;
+    }
+
 
     private void createVariantsFromUnsortedResult(final GATKAvroReader avroReader,
                                                   final HashMap<Long, HashMap<Allele, HashMap<Allele, Double>>> fullVqsLodMap,
@@ -667,7 +741,7 @@ public class ExtractCohortEngine {
         }
 
         final String callPL = sampleRecord.getCallPL();
-        if ( callPL != null ) {
+        if ( this.emitPLs && callPL != null ) {
             genotypeBuilder.PL(Arrays.stream(callPL.split(SchemaUtils.MULTIVALUE_FIELD_DELIMITER)).mapToInt(Integer::parseInt).toArray());
         }
 
@@ -694,4 +768,267 @@ public class ExtractCohortEngine {
     private VariantContext createRefSiteVariantContext(final String sample, final String contig, final long start, final Allele refAllele) {
         return createRefSiteVariantContextWithGQ(sample, contig, start, refAllele, null);
     }
+
+
+    private void createVariantsFromUnsortedRangesResult(
+            final String fqDatasetName,
+            final Set<Long> sampleIdsToExtract,
+            final Long minLocation,
+            final Long maxLocation,
+            final HashMap<Long, HashMap<Allele, HashMap<Allele, Double>>> fullVqsLodMap,
+            final HashMap<Long, HashMap<Allele, HashMap<Allele, String>>> fullYngMap,
+            final HashMap<Long, List<String>> siteFilterMap,
+            final boolean noVqslodFilteringRequested) {
+
+        Map<Integer, LinkedList<Set<Long>>> tableMap = new HashMap<>();
+
+        // TODO: handle these 'orElse' better (ie throw an exception)
+        Long maxSampleId = sampleIdsToExtract.stream().max(Long::compare).orElse(-1L);
+        Long minSampleId = sampleIdsToExtract.stream().min(Long::compare).orElse(-1L);
+
+        IngestUtils.getTableNumber(maxSampleId, IngestConstants.partitionPerTable);
+        // first just chop up the
+
+        for (Long sampleId : sampleIdsToExtract) {
+            int sampleTableNumber = IngestUtils.getTableNumber(sampleId, IngestConstants.partitionPerTable);
+
+            if (!tableMap.containsKey(sampleTableNumber)) {
+                tableMap.put(sampleTableNumber, new LinkedList<>());
+            }
+
+            // add the sample id to the end of the last element unless it is over
+            // 1000 elements in which case make a new list
+            if (tableMap.get(sampleTableNumber).size() == 0 || tableMap.get(sampleTableNumber).getLast().size() > 1000) {
+                TreeSet<Long> ts = new TreeSet<>();
+                tableMap.get(sampleTableNumber).addLast(ts);
+            }
+
+            tableMap.get(sampleTableNumber).getLast().add(sampleId);
+        }
+
+        // We could handle this by making a map of BitSets or something, but it seems unnecessary to support this
+        if (!SchemaUtils.decodeContig(minLocation).equals(SchemaUtils.decodeContig(maxLocation))) {
+            throw new GATKException("Can not process cross-contig boundaries");
+        }
+
+        float range = maxLocation - minLocation + 1;
+        if (range > Integer.MAX_VALUE) {
+            throw new GATKException("Single contig can not be bigger than " + Integer.MAX_VALUE);
+        }
+        BitSet positionBitSet = new BitSet((int) range);
+        logger.info("Constructed Variant Filter BitSet using " + range + " bits");
+
+        SortingCollection<GenericRecord> sortedVet = null;
+        for (int tableIndex : tableMap.keySet() ) {
+            TableReference vetTableRef =
+                    new TableReference(fqDatasetName + ".vet_" + String.format("%03d", tableIndex), SchemaUtils.EXTRACT_VET_FIELDS);
+
+            for (Set<Long> chunkSampleIds : tableMap.get(tableIndex)) {
+                String sampleRestriction = " AND sample_id IN (" + StringUtils.join(chunkSampleIds, ",") + ")";
+
+                final String vetRowRestriction =
+                        "location >= " + minLocation + " AND location <= " + maxLocation + sampleRestriction;
+                final StorageAPIAvroReader vetReader = new StorageAPIAvroReader(vetTableRef, vetRowRestriction, projectID);
+                if (sortedVet == null) {
+                    sortedVet = getAvroSortingCollection(vetReader.getSchema(), localSortMaxRecordsInRam);
+                }
+                addToVetSortingCollection(sortedVet, vetReader, positionBitSet, minLocation);
+            }
+        }
+
+        SortingCollection<GenericRecord> sortedReferenceRange = null;
+        for (int tableIndex : tableMap.keySet() ) {
+            TableReference refTableRef =
+                    new TableReference(fqDatasetName + ".ref_ranges_" + String.format("%03d", tableIndex), SchemaUtils.EXTRACT_REF_FIELDS);
+
+            for (Set<Long> chunkSampleIds : tableMap.get(tableIndex)) {
+                String sampleRestriction = " AND sample_id IN (" + StringUtils.join(chunkSampleIds, ",") + ")";
+
+                // range should end after the minLocation AND begin before the maxLocation
+                // TODO: this calculation breaks the ability to use clustering... need to address that.
+                // TODO: if we knew the maximum size of a block, we could use that instead of length.  We might grab a few extra rows but that should be not a problem.  Would need to change ingest to break up these blocks.
+                // TODO: also has to be written as location >= minLocation - MAX_BLOCK_SIZE +1
+                final String refRowRestriction =
+                        "location + length - 1 >= " + minLocation + " AND location <= " + maxLocation + sampleRestriction;
+                final StorageAPIAvroReader refReader = new StorageAPIAvroReader(refTableRef, refRowRestriction, projectID);
+                if (sortedReferenceRange == null) {
+                    sortedReferenceRange = getAvroSortingCollection(refReader.getSchema(), localSortMaxRecordsInRam);
+                }
+                // TODO: is it possible for us to eliminate "irrelevant" rows here before we sort them?
+                // From chr20: Processed 10669206 range records and rejected 9794223 irrelevant ones (~92%)
+                // Idea: what if we maintained a datastructure of "variant" sites while iterating through the VET
+                // in memory (we have to do all the VETs first) and the for each interval quickly ask if it's relevant
+                // would have to be VERY fast (ie maybe a bit array assuming we are not crossing chrom bounds etc).
+                // IDEA: use a BitSet with the index being the location-minLocation (assumin no chrom bounds).
+                // set bits for every variant site.  then as we are processing reference ranges do a
+                // !BitSet.get(start,stop).isEmpty() to see if there were any bits set in the range we asked about
+
+                addToRefSortingCollection(sortedReferenceRange, refReader, positionBitSet, minLocation);
+            }
+        }
+
+        CloseableIterator<GenericRecord> sortedReferenceRangeIterator = sortedReferenceRange.iterator();
+
+        Long lastSample = null;
+        Long lastPosition = null;
+
+        final Map<Long, ExtractCohortRecord> currentPositionRecords = new HashMap<>(sampleIdToName.size() * 2);
+        final Map<Long, TreeSet<ReferenceRecord>> referenceCache = new HashMap<>(sampleIdToName.size());
+
+        // Initialize cache
+        for ( Long sampleId: sampleIdsToExtract) {
+            referenceCache.put(sampleId, new TreeSet<>());
+        }
+
+        // NOTE: if OverlapDetector takes too long, try using RegionChecker from tws_sv_local_assembler
+        final OverlapDetector<SimpleInterval> intervalsOverlapDetector = OverlapDetector.create(traversalIntervals);
+
+        for (final GenericRecord sortedRow : sortedVet) {
+            final ExtractCohortRecord vetRow = new ExtractCohortRecord(sortedRow);
+            long v_position = vetRow.getLocation();
+            long v_sample = vetRow.getSampleId();
+
+            // new position, fill in remainder of last position data
+            // before continuing in to new position
+            if (lastPosition != null && v_position != lastPosition) {
+//                logger.info("skipped to new position " + v_position + " from " + lastPosition + " with last sample of " + lastSample);
+
+                // if the last VET was the last sample we 're done
+                if (lastSample != maxSampleId) {
+                    processReferenceData(currentPositionRecords, sortedReferenceRangeIterator, referenceCache, lastPosition, lastSample + 1, maxSampleId, sampleIdsToExtract);
+                }
+
+                ++totalNumberOfSites;
+                processSampleRecordsForLocation(lastPosition, currentPositionRecords.values(), fullVqsLodMap, fullYngMap, noVqslodFilteringRequested, siteFilterMap, VQSLODFilteringType);
+                currentPositionRecords.clear();
+
+                lastSample = null;
+            }
+
+            // bounds check... what if V is first sample?
+            if (lastSample == null) {
+                processReferenceData(currentPositionRecords, sortedReferenceRangeIterator, referenceCache, v_position, minSampleId, v_sample - 1, sampleIdsToExtract);
+            } else {
+                processReferenceData(currentPositionRecords, sortedReferenceRangeIterator, referenceCache, v_position, lastSample + 1, v_sample - 1, sampleIdsToExtract);
+            }
+
+            // handle the actual variant record
+            currentPositionRecords.merge(v_sample, vetRow, this::mergeSampleRecord);
+
+            // if the variant record was a deletion, fabricate a spanning deletion row for the cache
+            // so that a future request for reference state at a position underlying the deletion is
+            // properly handled
+            // TODO: is it possible that we will have two records now in the reference cache, and will we need logic to get "all" the records?
+            // TODO: should we really build a VariantContext here, and let that sort out the length of the deletion for now, get the shortest of the alternates (biggest deletion)
+            // TODO: use the genotypes of this specific sample (e.g. 0/1 vs 1/2) to decide how big the spanning deletion is.  The current logic matches what we do on ingest though
+            // TODO: really, really, really think this through!!!
+            int smallestAltLength = Arrays.stream(vetRow.getAltAllele().split(",")).map(x -> x.length()).min(Integer::compare).orElse(0);
+            int refLength = vetRow.getRefAllele().length();
+            if (refLength > smallestAltLength) {
+                referenceCache.get(v_sample).add(
+                        new ReferenceRecord(v_position+1, v_sample, refLength - smallestAltLength, "*")
+                );
+            }
+
+            lastPosition = v_position;
+            lastSample = v_sample;
+        }
+
+        // finish writing out reference rows
+        if (lastSample != maxSampleId) {
+            processReferenceData(currentPositionRecords, sortedReferenceRangeIterator, referenceCache, lastPosition, lastSample + 1, maxSampleId, sampleIdsToExtract);
+        }
+
+        if (!currentPositionRecords.isEmpty()) {
+            ++totalNumberOfSites;
+            processSampleRecordsForLocation(lastPosition, currentPositionRecords.values(), fullVqsLodMap, fullYngMap, noVqslodFilteringRequested, siteFilterMap, VQSLODFilteringType);
+        }
+    }
+
+    private void processReferenceData(Map<Long, ExtractCohortRecord> currentPositionRecords, CloseableIterator<GenericRecord> sortedReferenceRangeIterator, Map<Long, TreeSet<ReferenceRecord>> referenceCache, long location, long fromSampleId, long toSampleId, Set<Long> sampleIdsToExtract) {
+
+        List<Long> samples = sampleIdsToExtract.stream().filter(x -> x >= fromSampleId && x <= toSampleId).sorted().collect(toList());
+        for(Long s : samples) {
+            ExtractCohortRecord e = processReferenceData(sortedReferenceRangeIterator, referenceCache, location, s);
+            currentPositionRecords.merge(s, e, this::mergeSampleRecord);
+        }
+    }
+
+    private ExtractCohortRecord processReferenceData(CloseableIterator<GenericRecord> sortedReferenceRangeIterator, Map<Long, TreeSet<ReferenceRecord>> referenceCache, long location, long sampleId) {
+        String state = processReferenceDataFromCache(referenceCache, location, sampleId);
+
+        if (state == null) {
+            state = processReferenceDataFromStream(sortedReferenceRangeIterator, referenceCache, location, sampleId);
+        }
+
+        return new ExtractCohortRecord(location, 1, sampleId, state);
+    }
+
+    private String processReferenceDataFromCache(Map<Long, TreeSet<ReferenceRecord>> referenceCache, long location, long sampleId) {
+
+        Iterator<ReferenceRecord> iter = referenceCache.get(sampleId).iterator();
+        while (iter.hasNext()) {
+            ReferenceRecord row = iter.next();
+
+            // if it ends before the current location, it's no longer relevant
+            if (row.getEndLocation() < location) {
+                iter.remove();
+                continue;
+            }
+
+            // if it overlaps our location, use it!  Don't worry about removing it, if it
+            // becomes irrelevant the next time we process it we will remove it
+            if (row.getLocation() <= location && row.getEndLocation() >= location) {
+                return row.getState();
+            }
+
+            // completely after position, inferred state
+            if (row.getLocation() > location) {
+                return INFERRED_STATE;
+            }
+        }
+
+        // still here means QUEUE should be empty and we return a null state to indicate
+        // no results were found.
+        if (!referenceCache.get(sampleId).isEmpty()) {
+            throw new GATKException("should have an empty queue: " + referenceCache.get(sampleId));
+        } else {
+            return null;
+        }
+    }
+
+    private String processReferenceDataFromStream(CloseableIterator<GenericRecord> sortedReferenceRangeIterator, Map<Long, TreeSet<ReferenceRecord>> referenceCache, long location, long sampleId) {
+        while(sortedReferenceRangeIterator.hasNext()) {
+            final ReferenceRecord refRow = new ReferenceRecord(sortedReferenceRangeIterator.next());
+            totalRangeRecords++;
+
+            // skip irrelevant entries
+            if (refRow.getEndLocation() < location) {
+                totalIrrelevantRangeRecords++;
+                continue;
+            }
+
+            // is overlapping
+            if (refRow.getLocation() <= location) {
+
+                // always add to the appropriate cache for use downstream
+                referenceCache.get(refRow.getSampleId()).add(refRow);
+
+                // if this is for the requested sample, return the value
+                if (refRow.getSampleId() == sampleId) {
+                    return refRow.getState();
+                }
+            }
+
+            // we are now past the position, put this one entry in the cache and return the inferred state
+            if (refRow.getLocation() > location) {
+                referenceCache.get(refRow.getSampleId()).add(refRow);
+                return INFERRED_STATE;
+            }
+        }
+
+        // if we are still here... use the inferred state
+        return INFERRED_STATE;
+    }
+
 }

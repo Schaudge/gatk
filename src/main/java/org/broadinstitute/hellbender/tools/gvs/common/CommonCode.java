@@ -148,7 +148,8 @@ public class CommonCode {
 
     public enum ModeEnum {
         EXOMES,
-        GENOMES
+        GENOMES,
+        RANGES
     }
 
     public enum OutputType {

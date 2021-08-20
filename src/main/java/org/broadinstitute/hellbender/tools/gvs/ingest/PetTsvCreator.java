@@ -147,6 +147,9 @@ public final class PetTsvCreator {
                 setCoveredInterval(variantChr, start, end);
 
                 // if we are writing ref ranges, and this is a reference block, write it!
+                // TODO: break up reference blocks to be 1kb at maximum
+                // TODO: encode a no-call variant as a GQ0 ref block of length 1 (match PET behavior)
+                // TODO: add table creation/loading logic to WDL
                 if (writeReferenceRanges && variant.isReferenceBlock()) {
                     refRangesAvroWriter.write(SchemaUtils.encodeLocation(variantChr, start),
                             Long.parseLong(sampleId),
