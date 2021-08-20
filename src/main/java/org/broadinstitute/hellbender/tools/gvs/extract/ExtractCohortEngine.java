@@ -259,7 +259,7 @@ public class ExtractCohortEngine {
         long startTime = System.currentTimeMillis();
 
         for (final GenericRecord queryRow : avroReader) {
-            long offset = Long.parseLong(queryRow.get(SchemaUtils.LOCATION_FIELD_NAME).toString()) - locationOffset;
+            long offset = (Long) queryRow.get(SchemaUtils.LOCATION_FIELD_NAME) - locationOffset;
             positionBitSet.set((int) offset);
             sortingCollection.add(queryRow);
             if (recordsProcessed++ % 1000000 == 0) {
@@ -278,7 +278,7 @@ public class ExtractCohortEngine {
         long startTime = System.currentTimeMillis();
 
         for (final GenericRecord queryRow : avroReader) {
-            int offset = (int) (Long.parseLong(queryRow.get(SchemaUtils.LOCATION_FIELD_NAME).toString()) - locationOffset);
+            int offset = (int) ((Long) queryRow.get(SchemaUtils.LOCATION_FIELD_NAME) - locationOffset);
             int length = Integer.parseInt(queryRow.get("length").toString());
 
             if (!positionBitSet.get( offset, offset + length ).isEmpty()) {
