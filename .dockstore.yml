@@ -65,6 +65,16 @@ workflows:
        branches:
          - master
          - ah_var_store
+   - name: GvsExtractCallset
+     subclass: WDL
+     primaryDescriptorPath: /scripts/variantstore/wdl/GvsExtractCallset.wdl
+     testParameterFiles:
+       - /scripts/variantstore/wdl/GvsExtractCallset.example.inputs.json
+     filters:
+       branches:
+         - master
+         - kc_ranges_extract
+         - ah_var_store
    - name: MitochondriaPipeline
      subclass: WDL
      primaryDescriptorPath: /scripts/mitochondria_m2_wdl/MitochondriaPipeline.wdl
