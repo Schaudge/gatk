@@ -56,6 +56,15 @@ workflows:
      filters:
        branches:
          - master
+   - name: GvsCreateFilterSet
+     subclass: WDL
+     primaryDescriptorPath: /scripts/variantstore/wdl/GvsCreateFilterSet.wdl
+     testParameterFiles:
+       - /scripts/variantstore/wdl/GvsCreateFilterSet.example.inputs.json
+     filters:
+       branches:
+         - master
+         - ah_var_store
    - name: MitochondriaPipeline
      subclass: WDL
      primaryDescriptorPath: /scripts/mitochondria_m2_wdl/MitochondriaPipeline.wdl
