@@ -80,6 +80,7 @@ workflows:
      filters:
        branches:
          - ah_var_store
+         - kc_ranges_extract
    - name: GvsExtractCallset
      subclass: WDL
      primaryDescriptorPath: /scripts/variantstore/wdl/GvsExtractCallset.wdl
