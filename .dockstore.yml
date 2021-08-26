@@ -64,15 +64,6 @@ workflows:
      filters:
        branches:
          - ah_var_store
-   - name: GvsImportGenomes
-     subclass: WDL
-     primaryDescriptorPath: /scripts/variantstore/wdl/GvsImportGenomes.wdl
-     testParameterFiles:
-       - /scripts/variantstore/wdl/GvsImportGenomes.example.inputs.json
-     filters:
-       branches:
-         - ah_var_store
-         - kc_ranges_extract
    - name: MitochondriaPipeline
      subclass: WDL
      primaryDescriptorPath: /scripts/mitochondria_m2_wdl/MitochondriaPipeline.wdl
