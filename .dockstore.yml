@@ -96,6 +96,12 @@ workflows:
      filters:
        branches:
          - ah_var_store
+   - name: GvsValidateVatTable
+     subclass: WDL
+     primaryDescriptorPath: /scripts/variantstore/variant_annotations_table/GvsValidateVAT.wdl
+     filters:
+       branches:
+         - ah_var_store
    - name: MitochondriaPipeline
      subclass: WDL
      primaryDescriptorPath: /scripts/mitochondria_m2_wdl/MitochondriaPipeline.wdl
