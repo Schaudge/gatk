@@ -63,7 +63,6 @@ workflows:
        - /scripts/variantstore/wdl/GvsCreateFilterSet.example.inputs.json
      filters:
        branches:
-         - master
          - ah_var_store
    - name: GvsImportGenomes
      subclass: WDL
@@ -72,9 +71,8 @@ workflows:
        - /scripts/variantstore/wdl/GvsImportGenomes.example.inputs.json
      filters:
        branches:
-         - master
-         - kc_ranges_extract
          - ah_var_store
+         - kc_ranges_extract
    - name: MitochondriaPipeline
      subclass: WDL
      primaryDescriptorPath: /scripts/mitochondria_m2_wdl/MitochondriaPipeline.wdl
