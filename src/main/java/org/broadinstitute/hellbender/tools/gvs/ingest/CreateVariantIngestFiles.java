@@ -15,7 +15,6 @@ import org.broadinstitute.hellbender.engine.ReadsContext;
 import org.broadinstitute.hellbender.engine.ReferenceContext;
 import org.broadinstitute.hellbender.engine.VariantWalker;
 import org.broadinstitute.hellbender.exceptions.GATKException;
-import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.tools.gvs.common.ChromosomeEnum;
 import org.broadinstitute.hellbender.tools.gvs.common.CommonCode;
 import org.broadinstitute.hellbender.tools.gvs.common.IngestConstants;
@@ -69,11 +68,11 @@ public final class CreateVariantIngestFiles extends VariantWalker {
     optional = true)
     public boolean dropAboveGqThreshold = false;
 
-    @Argument(fullName = "write-reference-ranges",
+    @Argument(fullName = "enable-reference-ranges",
             shortName = "rr",
             doc = "write reference ranges data",
             optional = true)
-    public boolean writeReferenceRanges = false;
+    public boolean enableReferenceRanges = false;
 
     @Argument(fullName = "enable-vet",
             shortName = "ev",
@@ -190,7 +189,7 @@ public final class CreateVariantIngestFiles extends VariantWalker {
         final GenomeLocSortedSet genomeLocSortedSet = new GenomeLocSortedSet(new GenomeLocParser(seqDictionary));
         intervalArgumentGenomeLocSortedSet = GenomeLocSortedSet.createSetFromList(genomeLocSortedSet.getGenomeLocParser(), IntervalUtils.genomeLocsFromLocatables(genomeLocSortedSet.getGenomeLocParser(), intervalArgumentCollection.getIntervals(seqDictionary)));
 
-        petTsvCreator = new PetTsvCreator(sampleIdentifierForOutputFileName, sampleId, tableNumberPrefix, seqDictionary, gqStateToIgnore, dropAboveGqThreshold, outputDir, outputType, enablePet, writeReferenceRanges);
+        petTsvCreator = new PetTsvCreator(sampleIdentifierForOutputFileName, sampleId, tableNumberPrefix, seqDictionary, gqStateToIgnore, dropAboveGqThreshold, outputDir, outputType, enablePet, enableReferenceRanges);
 
         if (enableVet) {
             switch (mode) {

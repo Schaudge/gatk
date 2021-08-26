@@ -849,7 +849,7 @@ public class ExtractCohortEngine {
                 // TODO: if we knew the maximum size of a block, we could use that instead of length.  We might grab a few extra rows but that should be not a problem.  Would need to change ingest to break up these blocks.
                 // TODO: also has to be written as location >= minLocation - MAX_BLOCK_SIZE +1
                 final String refRowRestriction =
-                        "location + length - 1 >= " + minLocation + " AND location <= " + maxLocation + sampleRestriction;
+                        "location >= " + (minLocation - IngestConstants.MAX_REFERENCE_BLOCK_BASES + 1) + " AND location <= " + maxLocation + sampleRestriction;
                 final StorageAPIAvroReader refReader = new StorageAPIAvroReader(refTableRef, refRowRestriction, projectID);
                 if (sortedReferenceRange == null) {
                     sortedReferenceRange = getAvroSortingCollection(refReader.getSchema(), localSortMaxRecordsInRam);

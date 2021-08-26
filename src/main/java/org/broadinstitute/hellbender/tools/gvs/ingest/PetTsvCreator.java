@@ -31,7 +31,8 @@ public final class PetTsvCreator {
     private PetAvroWriter petAvroWriter = null;
     private PetParquetWriter petParquetWriter = null;
 
-    private RefRangesAvroWriter refRangesAvroWriter = null;
+    private RefRangesWriter refRangesWriter = null;
+
     private boolean writePetData;
     private boolean writeReferenceRanges;
     private final String sampleId;
@@ -39,8 +40,8 @@ public final class PetTsvCreator {
     private final SAMSequenceDictionary seqDictionary;
     private final Set<GQStateEnum> gqStatesToIgnore = new HashSet<GQStateEnum>();
     private GenomeLocSortedSet coverageLocSortedSet;
-    private static String PET_FILETYPE_PREFIX = "pet_";
-    private static String REF_RANGES_FILETYPE_PREFIX = "ref_";
+    private final static String PET_FILETYPE_PREFIX = "pet_";
+    private final static String REF_RANGES_FILETYPE_PREFIX = "ref_ranges_";
 
 
     public PetTsvCreator(String sampleIdentifierForOutputFileName, String sampleId, String tableNumberPrefix, SAMSequenceDictionary seqDictionary, GQStateEnum gqStateToIgnore, final boolean dropAboveGqThreshold, final File outputDirectory, final CommonCode.OutputType outputType, final boolean writePetData, final boolean writeReferenceRanges) {
@@ -74,8 +75,15 @@ public final class PetTsvCreator {
             }
 
             if (writeReferenceRanges) {
-                final File refOutputFile = new File(outputDirectory, REF_RANGES_FILETYPE_PREFIX + tableNumberPrefix + sampleIdentifierForOutputFileName + ".avro");
-                refRangesAvroWriter = new RefRangesAvroWriter(refOutputFile.getCanonicalPath());
+                final File refOutputFile = new File(outputDirectory, REF_RANGES_FILETYPE_PREFIX + tableNumberPrefix + sampleIdentifierForOutputFileName + "." + outputType.toString().toLowerCase());
+                switch (outputType) {
+                    case TSV:
+                        refRangesWriter = new RefRangesTsvWriter(refOutputFile.getCanonicalPath());
+                        break;
+                    case AVRO:
+                        refRangesWriter = new RefRangesAvroWriter(refOutputFile.getCanonicalPath());
+                        break;
+                }
             }
 
         } catch (final IOException e) {
@@ -150,12 +158,29 @@ public final class PetTsvCreator {
                 // TODO: break up reference blocks to be 1kb at maximum
                 // TODO: encode a no-call variant as a GQ0 ref block of length 1 (match PET behavior)
                 // TODO: add table creation/loading logic to WDL
-                if (writeReferenceRanges && variant.isReferenceBlock()) {
-                    refRangesAvroWriter.write(SchemaUtils.encodeLocation(variantChr, start),
-                            Long.parseLong(sampleId),
-                            end - start + 1,
-                            getGQStateEnum(variant.getGenotype(0).getGQ()).value
-                    );
+                if (writeReferenceRanges) {
+                    if (variant.isReferenceBlock()) {
+                        // break up reference blocks to be no longer than MAX_REFERENCE_BLOCK_SIZE
+                        // TODO -- abstract, write unit test
+                        int localStart = start;
+                        while ( localStart <= end ) {
+                            int length = Math.min(end - localStart + 1, IngestConstants.MAX_REFERENCE_BLOCK_BASES);
+                            refRangesWriter.write(SchemaUtils.encodeLocation(variantChr, localStart),
+                                    Long.parseLong(sampleId),
+                                    length,
+                                    getGQStateEnum(variant.getGenotype(0).getGQ()).value
+                            );
+                            localStart = localStart + length ;
+                        }
+
+                    // write out no-calls as a single-base GQ0 reference (to match PET behavior)
+                    } else if (CreateVariantIngestFiles.isNoCall(variant)) {
+                        refRangesWriter.write(SchemaUtils.encodeLocation(variantChr, start),
+                                Long.parseLong(sampleId),
+                                1,
+                                GQStateEnum.ZERO.value
+                        );
+                    }
                 }
 
                 if (writePetData) {
@@ -419,7 +444,7 @@ public final class PetTsvCreator {
                     break;
             }
 
-            if (refRangesAvroWriter != null) refRangesAvroWriter.close();
+            if (refRangesWriter != null) refRangesWriter.close();
 
         } catch (final Exception e) {
             throw new IllegalArgumentException("Couldn't close PET writer", e);

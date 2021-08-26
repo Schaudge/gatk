@@ -12,9 +12,13 @@ workflow GvsImportGenomes {
     String dataset_name
     String? pet_schema = "location:INTEGER,sample_id:INTEGER,state:STRING"
     String? vet_schema = "sample_id:INTEGER,location:INTEGER,ref:STRING,alt:STRING,AS_RAW_MQ:STRING,AS_RAW_MQRankSum:STRING,QUALapprox:STRING,AS_QUALapprox:STRING,AS_RAW_ReadPosRankSum:STRING,AS_SB_TABLE:STRING,AS_VarDP:STRING,call_GT:STRING,call_AD:STRING,call_GQ:INTEGER,call_PGT:STRING,call_PID:STRING,call_PL:STRING"
+    # TODO: can we make these fields required, does that really matter?
+    String? ref_ranges_schema = "location:INTEGER,sample_id:INTEGER,length:INTEGER,state:STRING"
     String? service_account_json_path
     String? drop_state = "SIXTY"
     Boolean? drop_state_includes_greater_than = false
+    Boolean load_pet = true
+    Boolean load_ref_ranges = false
 
     Int batch_size = 1
 
@@ -59,20 +63,35 @@ workflow GvsImportGenomes {
     }
   }
 
-  call CreateTables as CreatePetTables {
-  	input:
-      project_id = project_id,
-      dataset_name = dataset_name,
-      datatype = "pet",
-      max_table_id = select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]),
-      schema = pet_schema,
-      superpartitioned = "true",
-      partitioned = "true",
-      uuid = "",
-      service_account_json_path = service_account_json_path,
-      preemptible_tries = preemptible_tries,
-      docker = docker_final
-  }
+    call CreateTables as CreatePetTables {
+      input:
+        project_id = project_id,
+        dataset_name = dataset_name,
+        datatype = "pet",
+        max_table_id = select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]),
+        schema = pet_schema,
+        superpartitioned = "true",
+        partitioned = "true",
+        uuid = "",
+        service_account_json_path = service_account_json_path,
+        preemptible_tries = preemptible_tries,
+        docker = docker_final
+    }
+
+    call CreateTables as CreateRefRangesTables {
+        input:
+            project_id = project_id,
+            dataset_name = dataset_name,
+            datatype = "ref_ranges",
+            max_table_id = select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]),
+            schema = ref_ranges_schema,
+            superpartitioned = "true",
+            partitioned = "true",
+            uuid = "",
+            service_account_json_path = service_account_json_path,
+            preemptible_tries = preemptible_tries,
+            docker = docker_final
+    }
 
   call CreateTables as CreateVetTables {
   	input:
@@ -122,27 +141,47 @@ workflow GvsImportGenomes {
         docker = docker_final,
         preemptible_tries = preemptible_tries,
         run_uuid = SetLock.run_uuid,
-        duplicate_check_passed = CheckForDuplicateData.done
+        duplicate_check_passed = CheckForDuplicateData.done,
+        load_pet = load_pet,
+        load_ref_ranges = load_ref_ranges
     }
   }
 
-  scatter (i in range(select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]))) {
-    call LoadTable as LoadPetTable {
-    input:
-      project_id = project_id,
-      table_id = i + 1,
-      dataset_name = dataset_name,
-      storage_location = output_directory,
-      datatype = "pet",
-      superpartitioned = "true",
-      schema = pet_schema,
-      service_account_json_path = service_account_json_path,
-      table_creation_done = CreatePetTables.done,
-      tsv_creation_done = CreateImportTsvs.done,
-      docker = docker_final,
-      run_uuid = SetLock.run_uuid
+    scatter (i in range(select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]))) {
+      call LoadTable as LoadPetTable {
+      input:
+        project_id = project_id,
+        table_id = i + 1,
+        dataset_name = dataset_name,
+        storage_location = output_directory,
+        datatype = "pet",
+        superpartitioned = "true",
+        schema = pet_schema,
+        service_account_json_path = service_account_json_path,
+        table_creation_done = CreatePetTables.done,
+        tsv_creation_done = CreateImportTsvs.done,
+        docker = docker_final,
+        run_uuid = SetLock.run_uuid
+      }
     }
-  }
+
+    scatter (i in range(select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]))) {
+        call LoadTable as LoadRefRangesTable {
+            input:
+                project_id = project_id,
+                table_id = i + 1,
+                dataset_name = dataset_name,
+                storage_location = output_directory,
+                datatype = "ref_ranges",
+                superpartitioned = "true",
+                schema = ref_ranges_schema,
+                service_account_json_path = service_account_json_path,
+                table_creation_done = CreateRefRangesTables.done,
+                tsv_creation_done = CreateImportTsvs.done,
+                docker = docker_final,
+                run_uuid = SetLock.run_uuid
+        }
+    }
 
   scatter (i in range(select_first([GetSampleIds.max_table_id, GetMaxTableIdLegacy.max_table_id]))) {
     call LoadTable as LoadVetTable {
@@ -451,6 +490,8 @@ task CreateImportTsvs {
 
     String? for_testing_only
     String run_uuid
+    Boolean load_pet
+    Boolean load_ref_ranges
   }
 
   Int disk_size = if defined(drop_state) then 50 else 75
@@ -516,7 +557,7 @@ task CreateImportTsvs {
           if [ ~{call_cache_tsvs} = 'true' ]; then
             echo "Checking for files to call cache"
 
-            declare -a TABLETYPES=("sample_info" "pet" "vet")
+            declare -a TABLETYPES=("sample_info" "pet" "vet", "ref_ranges")
             ALL_FILES_EXIST='true'
             for TABLETYPE in ${TABLETYPES[@]}; do
                 FILEPATH="~{output_directory}/${TABLETYPE}_tsvs/**${TABLETYPE}_*_${input_vcf_basename}.tsv"
@@ -555,12 +596,15 @@ task CreateImportTsvs {
                 ~{"-IG " + drop_state} \
                 --ignore-above-gq-threshold ~{drop_state_includes_greater_than} \
                 --mode GENOMES \
+                --enable-reference-ranges ~{load_ref_ranges} \
+                --enable-pet ~{load_pet} \
                 -SN $sample_name \
                 -SNM ~{sample_map} \
                 --ref-version 38
 
               gsutil -m mv sample_info_*.tsv ~{output_directory}/sample_info_tsvs/
               gsutil -m mv pet_*.tsv ~{output_directory}/pet_tsvs/
+              gsutil -m mv ref_ranges_*.tsv ~{output_directory}/ref_ranges_tsvs/
               gsutil -m mv vet_*.tsv ~{output_directory}/vet_tsvs/
           fi
       done
