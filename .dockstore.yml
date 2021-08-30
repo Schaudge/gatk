@@ -89,6 +89,7 @@ workflows:
      filters:
        branches:
          - ah_var_store
+         - kc_ranges_extract
    - name: GvsSitesOnlyVCF
      subclass: WDL
      primaryDescriptorPath: /scripts/variantstore/wdl/GvsSitesOnlyVCF.wdl
