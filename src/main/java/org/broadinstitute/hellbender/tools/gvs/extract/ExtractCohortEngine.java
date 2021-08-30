@@ -811,7 +811,8 @@ public class ExtractCohortEngine {
             throw new GATKException("Can not process cross-contig boundaries");
         }
 
-        float range = maxLocation - minLocation + 1;
+        long range = (maxLocation + IngestConstants.MAX_REFERENCE_BLOCK_BASES) - (minLocation - IngestConstants.MAX_REFERENCE_BLOCK_BASES) + 1;
+        long locationOffset = minLocation - IngestConstants.MAX_REFERENCE_BLOCK_BASES;
         if (range > Integer.MAX_VALUE) {
             throw new GATKException("Single contig can not be bigger than " + Integer.MAX_VALUE);
         }
@@ -832,7 +833,7 @@ public class ExtractCohortEngine {
                 if (sortedVet == null) {
                     sortedVet = getAvroSortingCollection(vetReader.getSchema(), localSortMaxRecordsInRam);
                 }
-                addToVetSortingCollection(sortedVet, vetReader, positionBitSet, minLocation);
+                addToVetSortingCollection(sortedVet, vetReader, positionBitSet, locationOffset);
             }
         }
 
@@ -863,7 +864,7 @@ public class ExtractCohortEngine {
                 // set bits for every variant site.  then as we are processing reference ranges do a
                 // !BitSet.get(start,stop).isEmpty() to see if there were any bits set in the range we asked about
 
-                addToRefSortingCollection(sortedReferenceRange, refReader, positionBitSet, minLocation);
+                addToRefSortingCollection(sortedReferenceRange, refReader, positionBitSet, locationOffset);
             }
         }
 
