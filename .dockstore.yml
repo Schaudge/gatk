@@ -79,7 +79,6 @@ workflows:
        - /scripts/variantstore/wdl/GvsImportGenomes.example.inputs.json
      filters:
        branches:
-         - ah_var_store
          - kc_ranges_extract
    - name: GvsExtractCallset
      subclass: WDL
@@ -89,7 +88,6 @@ workflows:
      filters:
        branches:
          - ah_var_store
-         - master
    - name: GvsSitesOnlyVCF
      subclass: WDL
      primaryDescriptorPath: /scripts/variantstore/wdl/GvsSitesOnlyVCF.wdl
