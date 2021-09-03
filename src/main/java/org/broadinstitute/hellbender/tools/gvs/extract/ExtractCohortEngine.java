@@ -812,7 +812,7 @@ public class ExtractCohortEngine {
         }
 
         long range = (maxLocation + IngestConstants.MAX_REFERENCE_BLOCK_BASES) - (minLocation - IngestConstants.MAX_REFERENCE_BLOCK_BASES) + 1;
-        long locationOffset = minLocation - IngestConstants.MAX_REFERENCE_BLOCK_BASES;
+        long locationOffset = minLocation - Math.max(IngestConstants.MAX_REFERENCE_BLOCK_BASES, IngestConstants.MAX_DELETION_SIZE);
         if (range > Integer.MAX_VALUE) {
             throw new GATKException("Single contig can not be bigger than " + Integer.MAX_VALUE);
         }
@@ -827,8 +827,11 @@ public class ExtractCohortEngine {
             for (Set<Long> chunkSampleIds : tableMap.get(tableIndex)) {
                 String sampleRestriction = " AND sample_id IN (" + StringUtils.join(chunkSampleIds, ",") + ")";
 
+                // We need to look upstream MAX_DELETION_SIZE bases in case there is a deletion that begins before
+                // the requested range, but spans into our processing range.  We don't use a "length" or end position
+                // because it would break the clustering indexing
                 final String vetRowRestriction =
-                        "location >= " + minLocation + " AND location <= " + maxLocation + sampleRestriction;
+                        "location >= " + (minLocation - IngestConstants.MAX_DELETION_SIZE + 1)+ " AND location <= " + maxLocation + sampleRestriction;
                 final StorageAPIAvroReader vetReader = new StorageAPIAvroReader(vetTableRef, vetRowRestriction, projectID);
                 if (sortedVet == null) {
                     sortedVet = getAvroSortingCollection(vetReader.getSchema(), localSortMaxRecordsInRam);
@@ -889,6 +892,13 @@ public class ExtractCohortEngine {
             long v_position = vetRow.getLocation();
             long v_sample = vetRow.getSampleId();
 
+            // it's possible this variant is actually an upstream deletion before our region of interest,
+            // so make sure this is not the case before we the actual variant record and discard
+            if (v_position < minLocation) {
+                handlePotentialSpanningDeletion(vetRow, referenceCache);
+                continue;
+            }
+
             // new position, fill in remainder of last position data
             // before continuing in to new position
             if (lastPosition != null && v_position != lastPosition) {
@@ -923,13 +933,7 @@ public class ExtractCohortEngine {
             // TODO: should we really build a VariantContext here, and let that sort out the length of the deletion for now, get the shortest of the alternates (biggest deletion)
             // TODO: use the genotypes of this specific sample (e.g. 0/1 vs 1/2) to decide how big the spanning deletion is.  The current logic matches what we do on ingest though
             // TODO: really, really, really think this through!!!
-            int smallestAltLength = Arrays.stream(vetRow.getAltAllele().split(",")).map(x -> x.length()).min(Integer::compare).orElse(0);
-            int refLength = vetRow.getRefAllele().length();
-            if (refLength > smallestAltLength) {
-                referenceCache.get(v_sample).add(
-                        new ReferenceRecord(v_position+1, v_sample, refLength - smallestAltLength, "*")
-                );
-            }
+            handlePotentialSpanningDeletion(vetRow, referenceCache);
 
             lastPosition = v_position;
             lastSample = v_sample;
@@ -943,6 +947,20 @@ public class ExtractCohortEngine {
         if (!currentPositionRecords.isEmpty()) {
             ++totalNumberOfSites;
             processSampleRecordsForLocation(lastPosition, currentPositionRecords.values(), fullVqsLodMap, fullYngMap, noVqslodFilteringRequested, siteFilterMap, VQSLODFilteringType);
+        }
+    }
+
+    private void handlePotentialSpanningDeletion(ExtractCohortRecord vetRow, Map<Long, TreeSet<ReferenceRecord>> referenceCache) {
+        long position = vetRow.getLocation();
+        long sample = vetRow.getSampleId();
+
+        int smallestAltLength = Arrays.stream(vetRow.getAltAllele().split(",")).map(x -> x.length()).min(Integer::compare).orElse(0);
+        int refLength = vetRow.getRefAllele().length();
+
+        if (refLength > smallestAltLength) {
+            referenceCache.get(sample).add(
+                    new ReferenceRecord(position+1, sample, refLength - smallestAltLength, "*")
+            );
         }
     }
 
