@@ -229,6 +229,7 @@ public class GATKVCFHeaderLines {
         addInfoLine(new VCFInfoHeaderLine(MEDIAN_FRAGMENT_LENGTH_KEY, VCFHeaderLineCount.R, VCFHeaderLineType.Integer, "median fragment length by allele"));
         addInfoLine(new VCFInfoHeaderLine(MEDIAN_MAPPING_QUALITY_KEY, VCFHeaderLineCount.R, VCFHeaderLineType.Integer, "median mapping quality by allele"));
         addInfoLine(new VCFInfoHeaderLine(MEDIAN_READ_POSITON_KEY, VCFHeaderLineCount.A, VCFHeaderLineType.Integer, "median distance from end of read"));
+        addInfoLine(new VCFInfoHeaderLine(READ_POSITON_SD_KEY, VCFHeaderLineCount.A, VCFHeaderLineType.Float, "standard deviation of median distance from end of read"));
         addInfoLine(new VCFInfoHeaderLine(AS_SB_TABLE_KEY, 1, VCFHeaderLineType.String, "Allele-specific forward/reverse read counts for strand bias tests. Includes the reference and alleles separated by |."));
         addInfoLine(new VCFInfoHeaderLine(UNITIG_SIZES_KEY, VCFHeaderLineCount.UNBOUNDED, VCFHeaderLineType.Integer, "Sizes of reassembled unitigs"));
         addInfoLine(new VCFInfoHeaderLine(JOINT_ALIGNMENT_COUNT_KEY, 1, VCFHeaderLineType.Integer, "Number of joint alignments"));

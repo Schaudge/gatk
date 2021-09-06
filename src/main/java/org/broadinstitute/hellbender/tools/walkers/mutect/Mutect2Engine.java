@@ -263,7 +263,8 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator {
             if ( !containsCalls(calledHaplotypes) ) {
                 // no called all of the potential haplotypes
                 return referenceModelForNoVariation(originalAssemblyRegion);
-            } else {
+            }
+            else {
                 final List<VariantContext> result = new LinkedList<>();
                 // output left-flanking non-variant section, then variant-containing section, then right flank
                 trimmingResult.nonVariantLeftFlankRegion().ifPresent(flank -> result.addAll(referenceModelForNoVariation(flank)));
@@ -384,13 +385,11 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator {
 
         if (tumorLogOdds < MTAC.getInitialLogOdds()) {
             return new ActivityProfileState(refInterval, 0.0);
-        } else if (MTAC.trainingDataMode) {
-            return new ActivityProfileState(ref.getInterval(), 1.0);
         } else if (hasNormal() && !MTAC.genotypeGermlineSites) {
             final ReadPileup normalPileup = pileup.makeFilteredPileup(pe -> isNormalSample(ReadUtils.getSampleName(pe.getRead(), header)));
             normalPileupQualBuffer.accumulateQuals(normalPileup, refBase, MTAC.pcrSnvQual);
             final Pair<Integer, ByteArrayList> bestNormalAltAllele = normalPileupQualBuffer.likeliestIndexAndQuals();
-            if (bestNormalAltAllele.getLeft() == bestTumorAltAllele.getLeft()) {
+            if (bestNormalAltAllele.getLeft() == bestNormalAltAllele.getLeft()) {
                 final int normalAltCount = bestNormalAltAllele.getRight().size();
                 final double normalQualSum = normalPileupQualBuffer.qualSum(bestNormalAltAllele.getLeft());
                 if (normalAltCount > normalPileup.size() * MAX_ALT_FRACTION_IN_NORMAL && normalQualSum > MAX_NORMAL_QUAL_SUM) {
@@ -487,9 +486,22 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator {
     public static double logLikelihoodRatio(final int nRef, final List<Byte> altQuals, final int repeatFactor, final Optional<BetaDistributionShape> afPrior) {
         final int nAlt = repeatFactor * altQuals.size();
         final int n = nRef + nAlt;
+        
+	/*
+         A special logic was used to improve recall for high depth sequencing (>= 500X, espi for ~ 4000X)
+         *** >= 1% high quality alternative variation would be active this region! ***
+         Modified By Schaudge King
+         Init Date: 2020-07-16
+         */
+        if (nRef > 490) {
+            int confidentAltCounts = 0;
+            for (final byte phredQual : altQuals) {
+                if (phredQual >= 20) confidentAltCounts++;
+            }
+            if (confidentAltCounts > nRef * 0.008) return 5.0;
+        }
 
         final double fTildeRatio = FastMath.exp(MathUtils.digamma(nRef + 1) - MathUtils.digamma(nAlt + 1));
-
 
         double readSum = 0;
         for (final byte qual : altQuals) {

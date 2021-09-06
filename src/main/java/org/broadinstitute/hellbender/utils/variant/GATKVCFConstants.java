@@ -109,6 +109,7 @@ public final class GATKVCFConstants {
     public static final String MEDIAN_MAPPING_QUALITY_KEY =         "MMQ";
     public static final String MEDIAN_FRAGMENT_LENGTH_KEY =         "MFRL";
     public static final String MEDIAN_READ_POSITON_KEY =            "MPOS";
+    public static final String READ_POSITON_SD_KEY =                "POSSD";
     public static final String UNITIG_SIZES_KEY =                   "UNITIGS";
     public static final String ALIGNMENT_SCORE_DIFFERENCE_KEY =     "ALIGN_DIFF";
     public static final String JOINT_ALIGNMENT_COUNT_KEY =          "NALIGNS";

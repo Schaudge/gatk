@@ -2,6 +2,7 @@ package org.broadinstitute.hellbender.tools.walkers.haplotypecaller;
 
 import com.google.common.annotations.VisibleForTesting;
 import htsjdk.samtools.Cigar;
+import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMFileHeader;
 import htsjdk.samtools.SAMFileWriter;
 import htsjdk.samtools.reference.ReferenceSequenceFile;
@@ -90,7 +91,7 @@ public final class AssemblyBasedCallerUtils {
      * Returns a map with the original read as a key and the realigned read as the value.
      * <p>
      *     Missing keys or equivalent key and value pairs mean that the read was not realigned.
-     * </p>
+     * </p>originalReadLikelihoods = {AlleleLikelihoods@4185}
      * @return never {@code null}
      */
     public static Map<GATKRead, GATKRead> realignReadsToTheirBestHaplotype(final AlleleLikelihoods<GATKRead, Haplotype> originalReadLikelihoods, final Haplotype refHaplotype, final Locatable paddedReferenceLoc, final SmithWatermanAligner aligner) {
@@ -324,6 +325,10 @@ public final class AssemblyBasedCallerUtils {
             if (assembledVC == null) {
                 unassembledGivenAlleles = givenVC.getAlternateAlleles();
             } else {
+                // same (start) position has a variant event besides the force called (complex indels) alleles, we should omit this given allele.
+                // If we add this (potential false) positive alt allele, we would not generate the proper haplotype
+                // information by the following (phaseCall) logic. Modified By Schaudge King, 2021-09-04.
+                if (givenVC.isIndel() && assembledVariants.size() > 1) continue;
                 // map all alleles to the longest common reference
                 final Set<Allele> assembledAlleleSet = new HashSet<>(longerRef.length() == assembledVC.getReference().length() ? assembledVC.getAlternateAlleles() :
                         ReferenceConfidenceVariantContextMerger.remapAlleles(assembledVC, longerRef));
