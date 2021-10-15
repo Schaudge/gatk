@@ -488,17 +488,20 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator {
         final int n = nRef + nAlt;
         
 	/*
-         A special logic was used to improve recall for high depth sequencing (>= 500X, espi for ~ 4000X)
-         *** >= 1% high quality alternative variation would be active this region! ***
+         A special logic was used to improve the recall for high depth region (>= 300X, especially for ~ 4000X),
+         the region with larger than about 1%'s high quality alternative alleles would be active!
+         Some high confident mutations were missed by default Mutect2 for high depth region
+         (see https://www.nature.com/articles/s41587-021-00994-5).
          Modified By Schaudge King
          Init Date: 2020-07-16
          */
-        if (nRef > 490) {
+        if (nRef > 300) {
             int confidentAltCounts = 0;
             for (final byte phredQual : altQuals) {
-                if (phredQual >= 20) confidentAltCounts++;
+                if (phredQual >= 18) confidentAltCounts++;
             }
-            if (confidentAltCounts > nRef * 0.008) return 5.0;
+            final double stepwiseLowFreq = nRef > 490 ? 0.0076 : 0.016 * FastMath.exp((double) -nRef/1000);
+            if (confidentAltCounts > nRef * stepwiseLowFreq) return 5.0;
         }
 
         final double fTildeRatio = FastMath.exp(MathUtils.digamma(nRef + 1) - MathUtils.digamma(nAlt + 1));
