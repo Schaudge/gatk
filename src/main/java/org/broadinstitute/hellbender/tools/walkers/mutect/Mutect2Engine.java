@@ -487,19 +487,21 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator {
         final int nAlt = repeatFactor * altQuals.size();
         final int n = nRef + nAlt;
         
-	/*
-         A special logic was used to improve the recall for high depth region (>= 300X, especially for ~ 4000X),
-         the region with larger than about 1%'s high quality alternative alleles would be active!
-         Some high confident mutations were missed by default Mutect2 for high depth region
-         (see https://www.nature.com/articles/s41587-021-00994-5).
-         Modified By Schaudge King
-         Init Date: 2020-07-16
+	    /*
+         A special logic was used to improve the recall for high depth region (>= 300X, especially for > 4000X),
+         the region with larger than about 1%'s (highly suspect) confident alternative alleles would be active!
+         Some high confident mutations were missed by default Mutect2 for high depth region.
+         (see https://www.nature.com/articles/s41587-021-00994-5)
+         Modified By Schaudge King, init date: 2020-07-16
          */
         if (nRef > 300) {
             int confidentAltCounts = 0;
+            int moderateAltCounts = 0;
             for (final byte phredQual : altQuals) {
-                if (phredQual >= 18) confidentAltCounts++;
+                if (phredQual >= 18) ++confidentAltCounts;
+                else if (phredQual > 10) ++moderateAltCounts;
             }
+            if (moderateAltCounts > 20) confidentAltCounts += (moderateAltCounts / 2); // more plausible alleles enhance the confidence
             final double stepwiseLowFreq = nRef > 490 ? 0.0076 : 0.016 * FastMath.exp((double) -nRef/1000);
             if (confidentAltCounts > nRef * stepwiseLowFreq) return 5.0;
         }
