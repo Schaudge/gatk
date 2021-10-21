@@ -1,21 +1,22 @@
 package org.broadinstitute.hellbender.utils;
 
 import org.apache.commons.math3.distribution.EnumeratedDistribution;
-import org.apache.commons.math3.distribution.NormalDistribution;
 import org.apache.commons.math3.exception.DimensionMismatchException;
 import org.apache.commons.math3.exception.NotStrictlyPositiveException;
 import org.apache.commons.math3.exception.NumberIsTooLargeException;
 import org.apache.commons.math3.random.RandomGenerator;
 import org.apache.commons.math3.special.Gamma;
-import org.apache.commons.math3.stat.descriptive.moment.Mean;
 import org.apache.commons.math3.stat.descriptive.rank.Median;
-import org.apache.commons.math3.stat.descriptive.summary.Sum;
+import org.apache.commons.math3.stat.descriptive.rank.Percentile;
 import org.apache.commons.math3.util.FastMath;
 import org.apache.commons.math3.util.MathArrays;
 import org.apache.commons.math3.util.Pair;
 import org.broadinstitute.hellbender.utils.param.ParamUtils;
 
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.List;
+import java.util.OptionalDouble;
 import java.util.function.*;
 import java.util.stream.Collectors;
 
@@ -164,17 +165,9 @@ public final class MathUtils {
         return (int) FastMath.round(new Median().evaluate(Arrays.stream(values).mapToDouble(n -> n).toArray()));
     }
 
-    public double sd(final int[] values) {
+    public static int median(final int[] values, final Percentile.EstimationType type) {
         Utils.nonNull(values);
-        if ( values.length < 2 ) return 0.0;
-        double mean = new Mean().evaluate(Arrays.stream(values).mapToDouble(n -> n).toArray());
-        double square_sum = new Sum().evaluate(Arrays.stream(values).mapToDouble(n -> n - mean).toArray());
-        return Math.sqrt(square_sum / (values.length - 1));
-    }
-
-    public static int mad(final int[] values) {
-        double median = median(values);
-        return (int) FastMath.round(new Median().evaluate(Arrays.stream(values).mapToDouble(n -> n - median).toArray()));
+        return (int) FastMath.round(new Median().withEstimationType(type).evaluate(Arrays.stream(values).mapToDouble(n -> n).toArray()));
     }
 
     public static double dotProduct(double[] a, double[] b){
