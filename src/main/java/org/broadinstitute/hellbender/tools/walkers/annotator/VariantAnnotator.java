@@ -219,6 +219,8 @@ public class VariantAnnotator extends VariantWalker {
                 hasReference() ? getReferenceDictionary() : sequenceDictionary,
                 false);
 
+        // add auxiliary reads depth statistics information for the secondary filtered bam (e.g. different reads filter specification)
+        //hInfo.add(new VCFInfoHeaderLine("SFDP", 1, VCFHeaderLineType.Integer, "the reads depth for the secondary (filtered) bam"));
         vcfWriter = createVCFWriter(outputFile);
         vcfWriter.writeHeader(new VCFHeader(hInfo, samples));
     }
@@ -237,7 +239,7 @@ public class VariantAnnotator extends VariantWalker {
     public void apply(final VariantContext vc, final ReadsContext readsContext, final ReferenceContext refContext, final FeatureContext fc) {
 
         // if the reference is present and base is not ambiguous, we can annotate
-        if (refContext.getBases().length ==0 || BaseUtils.simpleBaseToBaseIndex(refContext.getBase()) != -1 ) {
+        if (refContext.getBases().length == 0 || BaseUtils.simpleBaseToBaseIndex(refContext.getBase()) != -1 ) {
             final ReferenceContext expandedRefContext = !hasReference() ? refContext :
                     new ReferenceContext(refContext, new SimpleInterval(vc).expandWithinContig(REFERENCE_PADDING, sequenceDictionary));
             VariantContext annotatedVC = annotatorEngine.annotateContext(vc, fc, expandedRefContext, makeLikelihoods(vc, readsContext), a -> true);

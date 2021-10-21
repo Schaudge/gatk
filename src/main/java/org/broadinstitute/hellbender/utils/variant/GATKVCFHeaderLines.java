@@ -32,7 +32,11 @@ public class GATKVCFHeaderLines {
         if (formatLines.containsKey(id)) {
             return formatLines.get(id);
         } else if (lookInVCFStandardLines) {
-            return VCFStandardHeaderLines.getFormatLine(id);
+            if (id.equals("SFAD"))
+                return new VCFFormatHeaderLine("SFAD", VCFHeaderLineCount.R, VCFHeaderLineType.Integer,
+                        "Allelic depths for the ref and alt alleles in the order listed for the secondary filtered bam");
+            else
+                return VCFStandardHeaderLines.getFormatLine(id);
         } else {
             throw new IllegalStateException("No VCF INFO header line found for key " + id);
         }
