@@ -254,7 +254,7 @@ public class VariantAnnotator extends VariantWalker {
         final AlleleLikelihoods<GATKRead, Allele> result = new AlleleLikelihoods<>(variantSamples,
                 new IndexedAlleleList<>(vc.getAlleles()), AssemblyBasedCallerUtils.splitReadsBySample(variantSamples, getHeaderForReads(), reads));
 
-        final ReadPileup readPileup = new ReadPileup(vc, readsContext);
+        final ReadPileup readPileup = new ReadPileup(vc, readsContext, true);
         final Map<String, ReadPileup> pileupsBySample = readPileup.splitBySample(getHeaderForReads(), "__UNKNOWN__");
 
         final Allele refAllele = vc.getReference();

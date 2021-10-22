@@ -3,6 +3,7 @@ package org.broadinstitute.hellbender.utils.pileup;
 import com.google.common.annotations.VisibleForTesting;
 import htsjdk.samtools.SAMFileHeader;
 import htsjdk.samtools.util.Locatable;
+import org.broadinstitute.hellbender.engine.filters.ReadFilter;
 import org.broadinstitute.hellbender.engine.filters.ReadFilterLibrary;
 import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.tools.walkers.qc.Pileup;
@@ -85,6 +86,25 @@ public class ReadPileup implements Iterable<PileupElement> {
     public ReadPileup(final Locatable loc, final Iterable<GATKRead> reads) {
         final List<PileupElement> pile = StreamSupport.stream(reads.spliterator(), false)
                 .filter(ReadFilterLibrary.PASSES_VENDOR_QUALITY_CHECK.and(ReadFilterLibrary.NOT_DUPLICATE))
+                .map(AlignmentStateMachine::new)
+                .map(asm -> {
+                    while ( asm.stepForwardOnGenome() != null && asm.getGenomePosition() < loc.getStart()) { }
+                    return asm.getGenomePosition() == loc.getStart() ? asm.makePileupElement() : null;
+                }).filter(Objects::nonNull).collect(Collectors.toList());
+
+        this.loc = loc;
+        pileupElements = pile;
+    }
+
+    /**
+     * Get the pileup of reads covering a locus whether faithful keep the duplicated reads information.
+     * This is useful, for example, in VariantWalkers, which work on ReadsContexts and not AlignmentContexts.
+     */
+    public ReadPileup(final Locatable loc, final Iterable<GATKRead> reads, boolean faithful) {
+        ReadFilter essentialReadFilter = faithful ? ReadFilterLibrary.PASSES_VENDOR_QUALITY_CHECK :
+                ReadFilterLibrary.PASSES_VENDOR_QUALITY_CHECK.and(ReadFilterLibrary.NOT_DUPLICATE);
+        final List<PileupElement> pile = StreamSupport.stream(reads.spliterator(), false)
+                .filter(essentialReadFilter)
                 .map(AlignmentStateMachine::new)
                 .map(asm -> {
                     while ( asm.stepForwardOnGenome() != null && asm.getGenomePosition() < loc.getStart()) { }
