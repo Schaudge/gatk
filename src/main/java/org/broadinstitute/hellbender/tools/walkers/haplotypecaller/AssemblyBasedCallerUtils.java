@@ -718,6 +718,7 @@ public final class AssemblyBasedCallerUtils {
         // use the haplotype mapping to connect variants that are always/never present on the same haplotypes
         for ( int i = 0; i < numCalls - 1; i++ ) {
             final VariantContext call = originalCalls.get(i);
+            final double callFraction = ((double []) call.getGenotype(0).getExtendedAttribute("AF"))[0];
             final Set<Haplotype> haplotypesWithCall = haplotypeMap.get(call);
             if ( haplotypesWithCall.isEmpty() ) {
                 continue;
@@ -736,6 +737,7 @@ public final class AssemblyBasedCallerUtils {
 
             for ( int j = i+1; j < numCalls; j++ ) {
                 final VariantContext comp = originalCalls.get(j);
+                final double compFraction = ((double[]) comp.getGenotype(0).getExtendedAttribute("AF"))[0];
                 final Set<Haplotype> haplotypesWithComp = haplotypeMap.get(comp);
                 if ( haplotypesWithComp.isEmpty() ) {
                     continue;
@@ -745,8 +747,13 @@ public final class AssemblyBasedCallerUtils {
                 // genotype for the variant is homozygous since this method does not consider the ref haplotype
                 final boolean compIsOnAllAltHaps = haplotypesWithComp.size() == totalAvailableHaplotypes;
 
+                // For some high frequency complex long indels, that many reads not coverage the whole indels completely,
+                // and variants will dispatch to different haplotypes, so we relax the conditions for phase set combination!
+                // TODO: more optimal condition to be considered!
                 if ( (haplotypesWithCall.size() == haplotypesWithComp.size() && haplotypesWithCall.containsAll(haplotypesWithComp))
-                        || (callIsOnAllAltHaps &&  callHaplotypesAvailableForPhasing.containsAll(haplotypesWithComp))
+                        || (callFraction > 0.03 && compFraction > 0.03 && compFraction - callFraction < 0.05 && callFraction - compFraction < 0.05 &&
+                        (haplotypesWithCall.containsAll(haplotypesWithComp) || haplotypesWithComp.containsAll(haplotypesWithCall)))
+                        || (callIsOnAllAltHaps && callHaplotypesAvailableForPhasing.containsAll(haplotypesWithComp))
                         || compIsOnAllAltHaps ) {
 
                     // create a new group if these are the first entries
