@@ -720,7 +720,7 @@ public final class AssemblyBasedCallerUtils {
             final VariantContext call = originalCalls.get(i);
             final double callFraction = ((double []) call.getGenotype(0).getExtendedAttribute("AF"))[0];
             final Set<Haplotype> haplotypesWithCall = haplotypeMap.get(call);
-            if ( haplotypesWithCall.isEmpty() ) {
+            if ( haplotypesWithCall.isEmpty() || callFraction < 0.0079) {
                 continue;
             }
 

@@ -167,7 +167,7 @@ public final class FilterMutectCalls extends MultiplePassVariantWalker {
             // it's important for filter parameters to stay the same and only learn the threshold in the final pass so that the
             // final threshold used corresponds exactly to the filters
             filteringEngine.learnThreshold();
-        }else if (n == NUMBER_OF_LEARNING_PASSES + 1) {
+        } else if (n == NUMBER_OF_LEARNING_PASSES + 1) {
             final Path filteringStats = IOUtils.getPath(filteringStatsOutput != null ? filteringStatsOutput : outputVcf + FILTERING_STATS_EXTENSION);
             filteringEngine.writeFilteringStats(filteringStats);
         } else {
