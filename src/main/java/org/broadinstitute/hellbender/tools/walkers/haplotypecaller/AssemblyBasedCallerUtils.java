@@ -227,7 +227,7 @@ public final class AssemblyBasedCallerUtils {
                 : QualityUtils.qualToErrorProbLog10(likelihoodArgs.phredScaledGlobalReadMismappingRate);
 
         return new PairHMMLikelihoodCalculationEngine((byte) likelihoodArgs.gcpHMM, likelihoodArgs.dontUseDragstrPairHMMScores ? null : DragstrParamUtils.parse(likelihoodArgs.dragstrParams),
-                likelihoodArgs.pairHMMNativeArgs.getPairHMMArgs(), likelihoodArgs.pairHMM, log10GlobalReadMismappingRate, likelihoodArgs.pcrErrorModel,
+                likelihoodArgs.pairHMMNativeArgs.getPairHMMArgs(), likelihoodArgs.pairHMM, likelihoodArgs.pairHmmResultsFile, log10GlobalReadMismappingRate, likelihoodArgs.pcrErrorModel,
                 likelihoodArgs.BASE_QUALITY_SCORE_THRESHOLD, likelihoodArgs.enableDynamicReadDisqualification, likelihoodArgs.readDisqualificationThresholdConstant,
                 likelihoodArgs.expectedErrorRatePerBase, !likelihoodArgs.disableSymmetricallyNormalizeAllelesToReference, likelihoodArgs.disableCapReadQualitiesToMapQ, handleSoftclips);
     }
@@ -260,7 +260,6 @@ public final class AssemblyBasedCallerUtils {
      * for further HC steps
      */
     public static AssemblyResultSet assembleReads(final AssemblyRegion region,
-                                                  final List<VariantContext> givenAlleles,
                                                   final AssemblyBasedCallerArgumentCollection argumentCollection,
                                                   final SAMFileHeader header,
                                                   final SampleList sampleList,
@@ -292,10 +291,6 @@ public final class AssemblyBasedCallerUtils {
         try {
             final AssemblyResultSet assemblyResultSet = assemblyEngine.runLocalAssembly(region, refHaplotype, fullReferenceWithPadding,
                     paddedReferenceLoc, readErrorCorrector, header, aligner, danglingEndSWParameters, haplotypeToReferenceSWParameters);
-            if (!givenAlleles.isEmpty()) {
-                addGivenAlleles(region.getPaddedSpan().getStart(), givenAlleles, argumentCollection.maxMnpDistance, aligner, haplotypeToReferenceSWParameters, refHaplotype, assemblyResultSet);
-            }
-
             assemblyResultSet.setDebug(argumentCollection.assemblerArgs.debugAssembly);
             assemblyResultSet.debugDump(logger);
             return assemblyResultSet;
@@ -312,10 +307,12 @@ public final class AssemblyBasedCallerUtils {
         }
     }
 
-    @VisibleForTesting
-    static void addGivenAlleles(final int assemblyRegionStart, final List<VariantContext> givenAlleles, final int maxMnpDistance,
-                                final SmithWatermanAligner aligner, final SWParameters haplotypeToReferenceSWParameters, final Haplotype refHaplotype, final AssemblyResultSet assemblyResultSet) {
-        final int activeRegionStart = refHaplotype.getAlignmentStartHapwrtRef();
+    public static void addGivenAlleles(final List<VariantContext> givenAlleles, final int maxMnpDistance, final SmithWatermanAligner aligner,
+                                       final SWParameters haplotypeToReferenceSWParameters, final AssemblyResultSet assemblyResultSet) {
+        if (givenAlleles.isEmpty()) {
+            return;
+        }
+        final Haplotype refHaplotype = assemblyResultSet.getReferenceHaplotype();
         final Map<Integer, VariantContext> assembledVariants = assemblyResultSet.getVariationEvents(maxMnpDistance).stream()
                 .collect(Collectors.groupingBy(VariantContext::getStart, Collectors.collectingAndThen(Collectors.toList(), AssemblyBasedCallerUtils::makeMergedVariantContext)));
 
@@ -358,12 +355,12 @@ public final class AssemblyBasedCallerUtils {
                         continue;
                     }
 
-                    final Haplotype insertedHaplotype = baseHaplotype.insertAllele(longerRef, givenAllele, activeRegionStart + givenVC.getStart() - assemblyRegionStart, givenVC.getStart());
+                    final Haplotype insertedHaplotype = baseHaplotype.insertAllele(longerRef, givenAllele, givenVC.getStart());
                     if (insertedHaplotype != null) { // can be null if the requested allele can't be inserted into the haplotype
                         final Cigar cigar = CigarUtils.calculateCigar(refHaplotype.getBases(), insertedHaplotype.getBases(), aligner, haplotypeToReferenceSWParameters, SWOverhangStrategy.INDEL);
                         insertedHaplotype.setCigar(cigar);
                         insertedHaplotype.setGenomeLocation(refHaplotype.getGenomeLocation());
-                        insertedHaplotype.setAlignmentStartHapwrtRef(activeRegionStart);
+                        insertedHaplotype.setAlignmentStartHapwrtRef(refHaplotype.getAlignmentStartHapwrtRef());
                         assemblyResultSet.add(insertedHaplotype);
                     }
                 }
@@ -459,8 +456,7 @@ public final class AssemblyBasedCallerUtils {
         final List<GATKRead> reads = new ArrayList<>(readLikelihoods.sampleEvidence(0));
         reads.sort(new ReadCoordinateComparator(readsHeader));  //because we updated the reads based on the local realignments we have to re-sort or the pileups will be... unpredictable
 
-        final LocusIteratorByState libs = new LocusIteratorByState(reads.iterator(), LocusIteratorByState.NO_DOWNSAMPLING,
-                false, samples.asSetOfSamples(), readsHeader, true);
+        final LocusIteratorByState libs = new LocusIteratorByState(reads.iterator(), LocusIteratorByState.NO_DOWNSAMPLING, samples.asSetOfSamples(), readsHeader, true);
 
         final int startPos = activeRegionSpan.getStart();
         final List<ReadPileup> pileups = new ArrayList<>(activeRegionSpan.getEnd() - startPos);

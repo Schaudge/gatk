@@ -82,7 +82,12 @@ public final class GenotypeUtils {
             }
 
             // Genotype::getLikelihoods returns a new array, so modification in-place is safe
-            final double[] normalizedLikelihoods = MathUtils.normalizeFromLog10ToLinearSpace(g.getLikelihoods().getAsVector());
+            final double[] normalizedLikelihoods;
+            if (g.hasLikelihoods()) {
+                normalizedLikelihoods = MathUtils.normalizeFromLog10ToLinearSpace(g.getLikelihoods().getAsVector());
+            } else {
+                throw new IllegalStateException("Genotype has no likelihoods: " + g.toString());
+            }
             final double[] biallelicLikelihoods;
 
             //if there are multiple alts, use the biallelic PLs for the best alt
@@ -136,8 +141,15 @@ public final class GenotypeUtils {
         return new GenotypeCounts(genotypeWithTwoRefsCount, genotypesWithOneRefCount, genotypesWithNoRefsCount);
     }
 
+    /**
+     * Do we have (or can we infer) likelihoods necessary for allele frequency calculation?
+     * Some reblocked and/or DRAGEN GVCFs omit likelihoods for ref blocks, but we can estimate them
+     * If GenomicsDB max alt threshold is too low, non-reference genotypes may also be missing PLs -- we can't estimate, so reject those
+     * @param g a genotype of unknown call and ploidy
+     * @return  true if we have enough info for AF calculation
+     */
     public static boolean genotypeIsUsableForAFCalculation(Genotype g) {
-        return g.hasLikelihoods() || g.hasGQ() || g.getAlleles().stream().anyMatch(a -> a.isCalled() && a.isNonReference() && !a.isSymbolic());
+        return g.hasLikelihoods() || (g.isHomRef() && g.hasGQ() && 2 == g.getPloidy());
     }
 
     /**

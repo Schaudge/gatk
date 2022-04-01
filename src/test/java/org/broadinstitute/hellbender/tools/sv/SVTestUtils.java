@@ -135,7 +135,7 @@ public class SVTestUtils {
             genotypes.add(makeGenotypeWithRefAllele(builder, refAllele));
         }
         return new SVCallRecord(id, contigA, positionA, strandA, contigB, positionB, strandB, type, length, algorithms,
-                newAlleles, genotypes);
+                newAlleles, genotypes, Collections.emptyMap(), hg38Dict);
     }
 
     public static final Genotype makeGenotypeWithRefAllele(final GenotypeBuilder builder, final Allele refAllele) {
@@ -355,11 +355,19 @@ public class SVTestUtils {
     }
 
     public static SVCallRecord newCallRecordWithAlleles(final List<Allele> genotypeAlleles, final List<Allele> variantAlleles,
-                                                        final StructuralVariantType svtype) {
+                                                        final StructuralVariantType svtype, final Integer expectedCopyNumber,
+                                                        final Integer copyNumber) {
+        GenotypeBuilder builder = new GenotypeBuilder("sample").alleles(genotypeAlleles);
+        if (expectedCopyNumber != null) {
+            builder = builder.attribute(GATKSVVCFConstants.EXPECTED_COPY_NUMBER_FORMAT, expectedCopyNumber);
+        }
+        if (copyNumber != null) {
+            builder = builder.attribute(GATKSVVCFConstants.COPY_NUMBER_FORMAT, copyNumber);
+        }
         return new SVCallRecord("", "chr1", 100, getValidTestStrandA(svtype), "chr1", 199, getValidTestStrandB(svtype),
                 svtype, 100, Collections.singletonList(GATKSVVCFConstants.DEPTH_ALGORITHM),
                 variantAlleles,
-                Collections.singletonList(new GenotypeBuilder().alleles(genotypeAlleles).make()),
+                Collections.singletonList(builder.make()),
                 Collections.emptyMap());
     }
 
@@ -403,6 +411,13 @@ public class SVTestUtils {
     // Note strands and length may not be set properly
     public static SVCallRecord newCallRecordWithIntervalAndType(final int start, final int end, final StructuralVariantType svtype) {
         return new SVCallRecord("", "chr1", start, getValidTestStrandA(svtype), "chr1", end, getValidTestStrandB(svtype),
+                svtype, getLength(start, end, svtype), PESR_ONLY_ALGORITHM_LIST, Collections.emptyList(),
+                Collections.emptyList(), Collections.emptyMap());
+    }
+
+    // Note strands and length may not be set properly
+    public static SVCallRecord newCallRecordWithContigsIntervalAndType(final String startContig, final int start, final String endContig, final int end, final StructuralVariantType svtype) {
+        return new SVCallRecord("", startContig, start, getValidTestStrandA(svtype), endContig, end, getValidTestStrandB(svtype),
                 svtype, getLength(start, end, svtype), PESR_ONLY_ALGORITHM_LIST, Collections.emptyList(),
                 Collections.emptyList(), Collections.emptyMap());
     }
