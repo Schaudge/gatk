@@ -186,7 +186,7 @@ public final class VariantContextTestUtils {
         result.alleles(sortedAlleles);
 
         GenotypesContext newGT = AlleleSubsettingUtils.subsetAlleles(vc.getGenotypes(),2,vc.getAlleles(),sortedAlleles, null,
-                                                                     GenotypeAssignmentMethod.SET_TO_NO_CALL, vc.getAttributeAsInt(VCFConstants.DEPTH_KEY,0), false);
+                                                                     GenotypeAssignmentMethod.SET_TO_NO_CALL);
 
         // Asserting that the new genotypes were calculated properly in case AlleleSubsettingUtils behavior changes
         if (newGT.getSampleNames().size() != vc.getGenotypes().size()) throw new IllegalStateException("Sorting this variant context resulted in a different number of genotype alleles, check that AlleleSubsettingUtils still supports reordering:" + vc.toString());
@@ -539,6 +539,10 @@ public final class VariantContextTestUtils {
         }
     }
 
+    public static void assertVariantContextMaxAltAlleleCount(final VariantContext actual, final Integer maxAltAlleles) {
+        Assert.assertTrue(actual.getAlternateAlleles().size() <= maxAltAlleles);
+    }
+
     /**
      * Method which compares two variant contexts for equality regardless of different allele ordering.
      *
@@ -595,6 +599,10 @@ public final class VariantContextTestUtils {
 
     public static Genotype makeG(final String sample, final Allele a1, final Allele a2, final int... pls) {
         return new GenotypeBuilder(sample, Arrays.asList(a1, a2)).PL(pls).make();
+    }
+
+    public static Genotype makeG(final String sample, final int gq, final Allele a1, final Allele a2, final int... pls) {
+        return new GenotypeBuilder(sample, Arrays.asList(a1, a2)).GQ(gq).PL(pls).make();
     }
 
     public static VariantContext makeVC(final String source, final List<Allele> alleles, final Genotype... genotypes) {

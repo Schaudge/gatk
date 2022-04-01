@@ -47,7 +47,7 @@ public class ReblockGVCFUnitTest extends CommandLineProgramTest {
     @Test
     public void testCleanUpHighQualityVariant() {
         final ReblockGVCF reblocker = new ReblockGVCF();
-        //We need an annotation engine for cleanUpHighQualityVariant()
+        //We need an annotation engine for cleanUpHighQualityVariant(), but this is just a dummy; annotations won't initialize properly without runCommandLine()
         reblocker.createAnnotationEngine();
         //...and a vcfwriter
         reblocker.vcfWriter = new ReblockingGVCFWriter(new GVCFWriterUnitTest.MockWriter(), Arrays.asList(20, 100), true, null, new ReblockingOptions());
@@ -96,7 +96,7 @@ public class ReblockGVCFUnitTest extends CommandLineProgramTest {
         reblocker.vcfWriter = new ReblockingGVCFWriter(new GVCFWriterUnitTest.MockWriter(), Arrays.asList(20, 100), true, null, new ReblockingOptions());
 
         reblocker.dropLowQuals = true;
-        final Genotype g = VariantContextTestUtils.makeG("sample1", LONG_REF, Allele.NON_REF_ALLELE, 200, 100, 200, 11, 0, 37);
+        final Genotype g = VariantContextTestUtils.makeG("sample1", 11, LONG_REF, Allele.NON_REF_ALLELE, 200, 100, 200, 11, 0, 37);
         final VariantContext toBeNoCalled = makeDeletionVC("lowQualVar", Arrays.asList(LONG_REF, DELETION, Allele.NON_REF_ALLELE), LONG_REF.length(), g);
         final VariantContextBuilder dropped = reblocker.lowQualVariantToGQ0HomRef(toBeNoCalled);
         Assert.assertNull(dropped);
@@ -110,6 +110,12 @@ public class ReblockGVCFUnitTest extends CommandLineProgramTest {
         Assert.assertTrue(!modified.filtersWereApplied());
         Assert.assertEquals(modified.getLog10PError(), VariantContext.NO_LOG10_PERROR);
 
+        final Genotype longPls = VariantContextTestUtils.makeG("sample1", Allele.NO_CALL, Allele.NO_CALL, 0,0,0,0,0,0);
+        final VariantContext lotsOfZeroPls = makeNoDepthVC("lowQualVar", Arrays.asList(LONG_REF, DELETION, Allele.NON_REF_ALLELE), LONG_REF.length(), longPls);
+        final VariantContext properlySubset = reblocker.lowQualVariantToGQ0HomRef(lotsOfZeroPls).make();
+        Assert.assertEquals(properlySubset.getGenotype(0).getPL().length, 3);
+        Assert.assertEquals(properlySubset.getGenotype(0).getPL(), new int[]{0,0,0});
+
         //No-calls were throwing NPEs.  Now they're not.
         final Genotype g2 = VariantContextTestUtils.makeG("sample1", Allele.NO_CALL,Allele.NO_CALL);
         final VariantContext noData = makeDeletionVC("noData", Arrays.asList(LONG_REF, DELETION, Allele.NON_REF_ALLELE), LONG_REF.length(), g2);
@@ -122,7 +128,8 @@ public class ReblockGVCFUnitTest extends CommandLineProgramTest {
 
         //haploid hom ref call
         final int[] pls = {0, 35, 72};
-        final GenotypeBuilder gb = new GenotypeBuilder("male_sample", Collections.singletonList(LONG_REF)).PL(pls);
+        final int gq = 35;
+        final GenotypeBuilder gb = new GenotypeBuilder("male_sample", Collections.singletonList(LONG_REF)).PL(pls).GQ(gq);
         final VariantContextBuilder vb = new VariantContextBuilder();
         vb.chr("20").start(10001).stop(10004).alleles(Arrays.asList(LONG_REF, DELETION, Allele.NON_REF_ALLELE)).log10PError(-3.0).genotypes(gb.make());
         final VariantContext vc = vb.make();
@@ -131,6 +138,7 @@ public class ReblockGVCFUnitTest extends CommandLineProgramTest {
         final Genotype newG = haploidRefBlock.getGenotype("male_sample");
 
         Assert.assertEquals(newG.getPloidy(), 1);
+        Assert.assertTrue(newG.hasGQ());
         Assert.assertEquals(newG.getGQ(), 35);
     }
 
@@ -138,10 +146,11 @@ public class ReblockGVCFUnitTest extends CommandLineProgramTest {
     public void testCalledHomRefGetsAltGQ() {
         final ReblockGVCF reblocker = new ReblockGVCF();
 
-        final Genotype g3 = VariantContextTestUtils.makeG("sample1", LONG_REF, LONG_REF, 0, 11, 37, 100, 200, 400);
+        final Genotype g3 = VariantContextTestUtils.makeG("sample1", 11, LONG_REF, LONG_REF, 0, 11, 37, 100, 200, 400);
         final VariantContext twoAltsHomRef = makeDeletionVC("lowQualVar", Arrays.asList(LONG_REF, DELETION, Allele.NON_REF_ALLELE), LONG_REF.length(), g3);
         final GenotypeBuilder takeGoodAltGQ = reblocker.changeCallToHomRefVersusNonRef(twoAltsHomRef, new HashMap<>());
         final Genotype nowRefBlock = takeGoodAltGQ.make();
+        Assert.assertTrue(nowRefBlock.hasGQ());
         Assert.assertEquals(nowRefBlock.getGQ(), 11);
         Assert.assertEquals(nowRefBlock.getDP(), 18);
         Assert.assertEquals((int)nowRefBlock.getExtendedAttribute(GATKVCFConstants.MIN_DP_FORMAT_KEY), 18);
@@ -372,7 +381,7 @@ public class ReblockGVCFUnitTest extends CommandLineProgramTest {
         origAttributes.put(GATKVCFConstants.AS_RAW_RMS_MAPPING_QUALITY_KEY, "123769.00|46800.00|0.00|0.00");
         originalBuilder.attributes(origAttributes);
         final VariantContext originalVC = originalBuilder.make();
-        final Genotype newG = VariantContextTestUtils.makeG("sample1", LONG_REF, LONG_SNP, 41, 0, 37, 200, 100, 200, 400, 600, 800, 1200);
+        final Genotype newG = VariantContextTestUtils.makeG("sample1", LONG_REF, LONG_SNP, 41, 0, 37, 200, 100, 200);
         final VariantContext regenotypedVC = makeDeletionVC("", Arrays.asList(LONG_REF, LONG_SNP, Allele.NON_REF_ALLELE), LONG_REF.length(), newG);
 
         final Map<String, Object> subsetAnnotations = ReblockGVCF.subsetAnnotationsIfNecessary(annotationEngine, true, null, originalVC, regenotypedVC);
@@ -423,6 +432,13 @@ public class ReblockGVCFUnitTest extends CommandLineProgramTest {
         final int stop = start+refLength-1;
         return new VariantContextBuilder(source, "1", start, stop, alleles)
                 .genotypes(Arrays.asList(genotypes)).unfiltered().log10PError(-3.0).attribute(VCFConstants.DEPTH_KEY, EXAMPLE_DP).make();
+    }
+
+    private VariantContext makeNoDepthVC(final String source, final List<Allele> alleles, final int refLength, final Genotype... genotypes) {
+        final int start = DEFAULT_START;
+        final int stop = start+refLength-1;
+        return new VariantContextBuilder(source, "1", start, stop, alleles)
+                .genotypes(Arrays.asList(genotypes)).unfiltered().log10PError(-3.0).make();
     }
 
     private Genotype addAD(final Genotype g, final int... ads) {

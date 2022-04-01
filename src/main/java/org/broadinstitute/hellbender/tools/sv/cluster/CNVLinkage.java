@@ -49,8 +49,14 @@ public class CNVLinkage extends SVClusterLinkage<SVCallRecord> {
         if (a.getType() != b.getType()) return false;
 
         // Interval overlap
-        if (!getPaddedRecordInterval(a.getContigA(), a.getPositionA(), a.getPositionB())
-                .overlaps(getPaddedRecordInterval(b.getContigA(), b.getPositionA(), b.getPositionB()))) return false;
+        // Positions should be validated already by the SVCallRecord class - these checks are for thoroughness
+        final SimpleInterval intervalA = getPaddedRecordInterval(a.getContigA(), a.getPositionA(), a.getPositionB());
+        Utils.nonNull(intervalA, "Invalid interval " + new SimpleInterval(a.getContigA(), a.getPositionA(),
+                a.getPositionB()) + " for record " + a.getId());
+        final SimpleInterval intervalB = getPaddedRecordInterval(b.getContigA(), b.getPositionA(), b.getPositionB());
+        Utils.nonNull(intervalB, "Invalid interval " + new SimpleInterval(b.getContigA(), b.getPositionA(),
+                b.getPositionB()) + " for record " + b.getId());
+        if (!intervalA.overlaps(intervalB)) return false;
 
         // Sample overlap
         if (!hasSampleOverlap(a, b, minSampleOverlap)) {
@@ -59,8 +65,8 @@ public class CNVLinkage extends SVClusterLinkage<SVCallRecord> {
 
         // In the single-sample case, match copy number strictly if we're looking at the same sample
         // TODO repeated check for CN attributes in hasSampleOverlap and getCarrierSamples
-        final Set<String> carriersA = a.getCarrierSamples();
-        final Set<String> carriersB = b.getCarrierSamples();
+        final Set<String> carriersA = a.getCarrierSampleSet();
+        final Set<String> carriersB = b.getCarrierSampleSet();
         if (carriersA.size() == 1 && carriersA.equals(carriersB)) {
             final Genotype genotypeA = a.getGenotypes().get(carriersA.iterator().next());
             final Genotype genotypeB = b.getGenotypes().get(carriersB.iterator().next());
@@ -90,6 +96,9 @@ public class CNVLinkage extends SVClusterLinkage<SVCallRecord> {
     @Override
     public int getMaxClusterableStartingPosition(final SVCallRecord call) {
         final int contigLength = dictionary.getSequence(call.getContigA()).getSequenceLength();
+        if (!call.isSimpleCNV()) {
+            return 0;
+        }
         final int maxTheoreticalStart = (int) Math.floor((call.getPositionB() + paddingFraction * (call.getLength() + contigLength)) / (1.0 + paddingFraction));
         return Math.min(maxTheoreticalStart, dictionary.getSequence(call.getContigA()).getSequenceLength());
     }

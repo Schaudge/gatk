@@ -136,6 +136,8 @@ public class CanonicalSVLinkage<T extends SVCallRecord> extends SVClusterLinkage
         // Breakend proximity
         final SimpleInterval intervalA1 = a.getPositionAInterval().expandWithinContig(params.getWindow(), dictionary);
         final SimpleInterval intervalA2 = a.getPositionBInterval().expandWithinContig(params.getWindow(), dictionary);
+        Utils.nonNull(intervalA1, "Invalid start position " + a.getPositionA() + " in record " + a.getId());
+        Utils.nonNull(intervalA2, "Invalid end position " + a.getPositionB() + " in record " + a.getId());
         final SimpleInterval intervalB1 = b.getPositionAInterval();
         final SimpleInterval intervalB2 = b.getPositionBInterval();
         if (!(intervalA1.overlaps(intervalB1) && intervalA2.overlaps(intervalB2))) {
@@ -177,17 +179,19 @@ public class CanonicalSVLinkage<T extends SVCallRecord> extends SVClusterLinkage
                                                                    final SAMSequenceDictionary dictionary) {
         final String contig = call.getContigA();
         final int contigLength = dictionary.getSequence(contig).getSequenceLength();
-        // Reciprocal overlap window
-        final int maxPositionByOverlap;
-        if (call.isIntrachromosomal()) {
-            final int maxPosition = (int) (call.getPositionA() + (1.0 - params.getReciprocalOverlap()) * getLengthForOverlap(call));
-            maxPositionByOverlap = Math.min(maxPosition, contigLength);
-        } else {
-            maxPositionByOverlap = call.getPositionA();
-        }
 
         // Breakend proximity window
         final int maxPositionByWindow = Math.min(call.getPositionA() + params.getWindow(), contigLength);
+
+        // Don't use overlap for inter-chromosomal events
+        if (!call.isIntrachromosomal()) {
+            return maxPositionByWindow;
+        }
+
+        // Reciprocal overlap window
+        final int maxPositionByOverlap;
+        final int maxPosition = (int) (call.getPositionA() + (1.0 - params.getReciprocalOverlap()) * getLengthForOverlap(call));
+        maxPositionByOverlap = Math.min(maxPosition, contigLength);
 
         if (params.requiresOverlapAndProximity()) {
             return Math.min(maxPositionByOverlap, maxPositionByWindow);
