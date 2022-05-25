@@ -7,11 +7,14 @@ import htsjdk.tribble.AsciiFeatureCodec;
 import htsjdk.tribble.index.tabix.TabixFormat;
 import htsjdk.tribble.readers.LineIterator;
 import org.broadinstitute.hellbender.engine.GATKPath;
+import org.broadinstitute.hellbender.exceptions.UserException;
 import org.broadinstitute.hellbender.tools.sv.LocusDepth;
+import org.broadinstitute.hellbender.tools.sv.LocusDepthSortMerger;
 import org.broadinstitute.hellbender.utils.io.FeatureOutputStream;
 
 import java.util.List;
 
+/** Codec to handle LocusDepths in tab-delimited text files */
 public class LocusDepthCodec extends AsciiFeatureCodec<LocusDepth>
         implements FeatureOutputCodec<LocusDepth, FeatureOutputStream<LocusDepth>> {
     public static final String FORMAT_SUFFIX = ".ld.txt";
@@ -32,7 +35,7 @@ public class LocusDepthCodec extends AsciiFeatureCodec<LocusDepth>
         }
         return new LocusDepth(tokens.get(0),
                 Integer.parseUnsignedInt(tokens.get(1)) + 1,
-                (byte)tokens.get(2).charAt(0),
+                tokens.get(2),
                 Integer.parseUnsignedInt(tokens.get(3)),
                 Integer.parseUnsignedInt(tokens.get(4)),
                 Integer.parseUnsignedInt(tokens.get(5)),
@@ -55,6 +58,11 @@ public class LocusDepthCodec extends AsciiFeatureCodec<LocusDepth>
                                                      final SAMSequenceDictionary dict,
                                                      final List<String> sampleNames,
                                                      final int compressionLevel ) {
+        if ( sampleNames.size() != 1 ) {
+            throw new UserException("LocusDepth records do not encode their sample, and must all " +
+                    "refer to a single sample, but the list of sample names is of " +
+                    "size=" + sampleNames.size());
+        }
         return new FeatureOutputStream<>(path,
                 getTabixFormat(),
                 LocusDepthCodec::encode,
@@ -67,10 +75,18 @@ public class LocusDepthCodec extends AsciiFeatureCodec<LocusDepth>
         os.write(ev);
     }
 
+    @Override
+    public FeatureSink<LocusDepth> makeSortMerger( final GATKPath path,
+                                                   final SAMSequenceDictionary dict,
+                                                   final List<String> sampleNames,
+                                                   final int compressionLevel ) {
+        return new LocusDepthSortMerger(dict, makeSink(path, dict, sampleNames, compressionLevel));
+    }
+
     public static String encode( final LocusDepth locusDepth ) {
         return locusDepth.getContig() + "\t" + (locusDepth.getStart() - 1) + "\t" +
-                locusDepth.getRefCall() + "\t" + locusDepth.getADepth() + "\t" +
-                locusDepth.getCDepth() + "\t" + locusDepth.getGDepth() + "\t" +
-                locusDepth.getTDepth();
+                locusDepth.getSample() + "\t" +
+                locusDepth.getDepth(0) + "\t" + locusDepth.getDepth(1) + "\t" +
+                locusDepth.getDepth(2) + "\t" + locusDepth.getDepth(3);
     }
 }

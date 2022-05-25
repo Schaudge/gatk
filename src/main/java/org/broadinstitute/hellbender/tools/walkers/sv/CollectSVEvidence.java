@@ -6,7 +6,6 @@ import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMSequenceDictionary;
 import htsjdk.samtools.util.Locatable;
 import htsjdk.variant.variantcontext.VariantContext;
-import org.apache.logging.log4j.LogManager;
 import org.broadinstitute.barclay.argparser.Argument;
 import org.broadinstitute.barclay.argparser.BetaFeature;
 import org.broadinstitute.barclay.argparser.CommandLineProgramProperties;
@@ -122,6 +121,7 @@ public class CollectSVEvidence extends ReadWalker {
             optional = true)
     public GATKPath alleleCountInputFilename;
 
+
     @Argument(fullName = "allele-count-min-mapq",
             doc = "minimum mapping quality for read to be allele-counted",
             optional = true)
@@ -161,11 +161,10 @@ public class CollectSVEvidence extends ReadWalker {
         super.onTraversalStart();
 
         sequenceDictionary = getBestAvailableSequenceDictionary();
-        final List<String> sampleNames = Collections.singletonList(sampleName);
         peWriter = createPEWriter();
         srWriter = createSRWriter();
         if ( alleleCountInputFilename != null && alleleCountOutputFilename != null ) {
-            alleleCounter = new AlleleCounter(sequenceDictionary, sampleNames, compressionLevel,
+            alleleCounter = new AlleleCounter(sequenceDictionary, sampleName, compressionLevel,
                                                 alleleCountInputFilename, alleleCountOutputFilename,
                                                 minMapQ, minQ);
         } else if ( alleleCountInputFilename != null ) {
@@ -325,7 +324,7 @@ public class CollectSVEvidence extends ReadWalker {
                                   final FeatureSink<SplitReadEvidence> srWriter) {
 
         while (splitCounts.size() > 0 && flushablePosition.test(splitCounts.peek())) {
-            SplitPos pos = splitCounts.poll();
+            final SplitPos pos = splitCounts.poll();
             int countAtPos = 1;
             while (splitCounts.size() > 0 && splitCounts.peek().equals(pos)) {
                 countAtPos++;
@@ -336,7 +335,7 @@ public class CollectSVEvidence extends ReadWalker {
         }
     }
 
-    private SplitPos getSplitPosition(GATKRead read) {
+    private SplitPos getSplitPosition( final GATKRead read ) {
         if (read.getCigar().getFirstCigarElement().getOperator() == CigarOperator.M) {
             final int matchLength = read.getCigar().getCigarElements().stream().filter(e -> e.getOperator().consumesReferenceBases()).mapToInt(CigarElement::getLength).sum();
             return new SplitPos(read.getStart() + matchLength, POSITION.RIGHT);
@@ -347,7 +346,7 @@ public class CollectSVEvidence extends ReadWalker {
         return new SplitPos(-1, POSITION.MIDDLE);
     }
 
-    private boolean isSoftClipped(final GATKRead read) {
+    private boolean isSoftClipped( final GATKRead read ) {
         final CigarOperator firstOperator = read.getCigar().getFirstCigarElement().getOperator();
         final CigarOperator lastOperator = read.getCigar().getLastCigarElement().getOperator();
         return (firstOperator == CigarOperator.SOFT_CLIP && lastOperator != CigarOperator.SOFT_CLIP) ||
@@ -380,7 +379,7 @@ public class CollectSVEvidence extends ReadWalker {
         MIDDLE ("middle"),
         RIGHT ("right");
 
-        private String description;
+        private final String description;
 
         POSITION(final String description) {
             this.description = description;
@@ -477,9 +476,9 @@ public class CollectSVEvidence extends ReadWalker {
             if (mateReverseStrand != that.mateReverseStrand) return false;
             if (start != that.start) return false;
             if (mateStart != that.mateStart) return false;
-            if (contig != null ? !contig.equals(that.contig) : that.contig != null) return false;
-            if (mateContig != null ? !mateContig.equals(that.mateContig) : that.mateContig != null) return false;
-            return name != null ? name.equals(that.name) : that.name == null;
+            if ( !Objects.equals(contig, that.contig) ) return false;
+            if ( !Objects.equals(mateContig, that.mateContig) ) return false;
+            return Objects.equals(name, that.name);
         }
 
         @Override
@@ -557,6 +556,7 @@ public class CollectSVEvidence extends ReadWalker {
     @VisibleForTesting
     final static class AlleleCounter {
         private final SAMSequenceDictionary dict;
+        private final String sampleName;
         private final FeatureSink<LocusDepth> writer;
         private final int minMapQ;
         private final int minQ;
@@ -564,15 +564,17 @@ public class CollectSVEvidence extends ReadWalker {
         private final Deque<LocusDepth> locusDepthQueue;
 
         public AlleleCounter( final SAMSequenceDictionary dict,
-                              final List<String> sampleNames,
+                              final String sampleName,
                               final int compressionLevel,
                               final GATKPath inputPath,
                               final GATKPath outputPath,
                               final int minMapQ,
                               final int minQ ) {
             this.dict = dict;
+            this.sampleName = sampleName;
             final String outputFilename = outputPath.toPath().toString();
             final LocusDepthBCICodec bciCodec = new LocusDepthBCICodec();
+            final List<String> sampleNames = Collections.singletonList(sampleName);
             if ( bciCodec.canDecode(outputFilename) ) {
                 this.writer = bciCodec.makeSink(outputPath, dict, sampleNames, compressionLevel);
             } else {
@@ -693,14 +695,13 @@ public class CollectSVEvidence extends ReadWalker {
                 return false;
             }
             VariantContext snp = snpSourceItr.next();
-            while ( !snp.isSNP() ) {
+            while ( !snp.isSNP() || !snp.isBiallelic() ) {
                 if ( !snpSourceItr.hasNext() ) {
                     return false;
                 }
                 snp = snpSourceItr.next();
             }
-            final byte[] refSeq = snp.getReference().getBases();
-            final LocusDepth locusDepth = new LocusDepth(snp, refSeq[0]);
+            final LocusDepth locusDepth = new LocusDepth(snp, sampleName);
             locusDepthQueue.add(locusDepth);
             return true;
         }
