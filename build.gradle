@@ -61,7 +61,7 @@ repositories {
 }
 
 final htsjdkVersion = System.getProperty('htsjdk.version','2.24.1')
-final picardVersion = System.getProperty('picard.version','2.25.4')
+final picardVersion = System.getProperty('picard.version','2.27.1')
 final barclayVersion = System.getProperty('barclay.version','4.0.2')
 final sparkVersion = System.getProperty('spark.version', '2.4.5')
 final scalaVersion = System.getProperty('scala.version', '2.11')
@@ -73,8 +73,7 @@ final guavaVersion = System.getProperty('guava.version', '31.0.1-jre')
 final log4j2Version = System.getProperty('log4j2Version', '2.17.1')
 final testNGVersion = '7.0.0'
 
-final googleCloudNioDependency = 'com.google.cloud:google-cloud-nio:0.123.23'
-
+final googleCloudNioDependency = 'com.google.cloud:google-cloud-nio:0.123.25'
 
 final baseJarName = 'gatk'
 final secondaryBaseJarName = 'hellbender'
@@ -320,7 +319,8 @@ dependencies {
         exclude module: 'hadoop-bam'
     }
 
-    implementation 'org.jgrapht:jgrapht-core:0.9.1'
+    implementation 'org.jgrapht:jgrapht-core:1.1.0'
+    implementation 'org.jgrapht:jgrapht-io:1.1.0'
 
     implementation('org.disq-bio:disq:' + disqVersion)
     implementation('org.apache.hadoop:hadoop-client:' + hadoopVersion) // should be a 'provided' dependency
@@ -804,7 +804,20 @@ task gatkWDLGen(type: Javadoc, dependsOn: classes) {
     options.addStringOption("build-dir", System.getenv("TRAVIS_BUILD_DIR") ?: new File(".").getAbsolutePath())
 }
 
-task gatkWDLGenValidation(dependsOn: [gatkWDLGen, shadowJar]) {
+def execWDLValidation = { validateWDL ->
+    println "Executing: $validateWDL"
+    try {
+        def retCode = validateWDL.execute().waitFor()
+        if (retCode.intValue() != 0) {
+            throw new GradleException("Execution of \"$validateWDL\" failed with exit code: $retCode.")
+        }
+        return retCode
+    } catch (IOException e) {
+        throw new GradleException("An IOException occurred while attempting to execute the command $validateWDL.")
+    }
+}
+
+task gatkValidateScriptsWdl() {
     doFirst {
         // running this task requires a local cromwell installation, with environment variables CROMWELL_JAR,
         // WOMTOOL_JAR set to the jar locations
@@ -813,21 +826,31 @@ task gatkWDLGenValidation(dependsOn: [gatkWDLGen, shadowJar]) {
         }
     }
 
-    def execWDLValidation = { validateWDL ->
-        println "Executing: $validateWDL"
-        try {
-            def retCode = validateWDL.execute().waitFor()
-            if (retCode.intValue() != 0) {
-                throw new GradleException("Execution of \"$validateWDL\" failed with exit code: $retCode.")
-            }
-            return retCode
-        } catch (IOException e) {
-            throw new GradleException("An IOException occurred while attempting to execute the command $validateWDL.")
+    doLast {
+        // Run the womtool validator on all WDL files in the 'scripts' directory
+        final File wdlFolder = new File("scripts")
+        def wdlFiles = fileTree(dir: wdlFolder).filter {
+            f -> f.getAbsolutePath().endsWith(".wdl")
+        }
+        final womtoolLocation = System.getenv('WOMTOOL_JAR')
+        wdlFiles.any() { wdlFile ->
+            final validateWDLCommand = "java -jar $womtoolLocation validate $wdlFile"
+            execWDLValidation(validateWDLCommand)
+        }
+    }
+}
+
+task gatkValidateGeneratedWdl(dependsOn: [gatkWDLGen, shadowJar]) {
+    doFirst {
+        // running this task requires a local cromwell installation, with environment variables CROMWELL_JAR,
+        // WOMTOOL_JAR set to the jar locations
+        if (System.getenv('CROMWELL_JAR') == null || System.getenv('WOMTOOL_JAR') == null) {
+            throw new GradleException("Running this task requires the CROMWELL_JAR and WOMTOOL_JAR environment variables to be set")
         }
     }
 
     doLast {
-        // first, run the womtool validator
+        // first, run the womtool validator on WDL files in the 'docs/wdlGen' directory
         final File wdlGenFolder = new File("$docBuildDir/wdlGen")
         def wdlFiles = fileTree(dir: wdlGenFolder).filter {
             f -> !f.getAbsolutePath().endsWith(".html") && !f.getAbsolutePath().endsWith(".json")
@@ -863,7 +886,6 @@ task gatkWDLGenValidation(dependsOn: [gatkWDLGen, shadowJar]) {
             file("$buildDir/cromwell-workflow-logs").deleteDir()
         }
     }
-
 }
 
 

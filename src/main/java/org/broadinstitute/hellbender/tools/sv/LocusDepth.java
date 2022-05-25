@@ -1,54 +1,42 @@
 package org.broadinstitute.hellbender.tools.sv;
 
 import com.google.common.annotations.VisibleForTesting;
-import htsjdk.samtools.SAMSequenceDictionary;
 import htsjdk.samtools.util.Locatable;
-import htsjdk.tribble.Feature;
-import org.broadinstitute.hellbender.utils.Nucleotide;
+import org.broadinstitute.hellbender.utils.Utils;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.util.*;
 
+/** The read depth of each base call for a sample at some locus. */
 @VisibleForTesting
-public final class LocusDepth implements Feature {
+public final class LocusDepth implements SVFeature {
     private final String contig;
     private final int position;
-    private final byte refCall; // index into nucleotideValues
-    private int[] depths;
+    private final String sample;
+    private final int[] depths; // four slots for each call, ACGT
+
     public final static String BCI_VERSION = "1.0";
 
-    // our own private copy so that we don't make repeated array allocations
-    private final static Nucleotide[] nucleotideValues = Nucleotide.values();
-
-    public LocusDepth( final Locatable loc, final byte refCall ) {
-        this.contig = loc.getContig();
-        this.position = loc.getStart();
-        this.refCall = refCall;
-        this.depths = new int[4];
+    public LocusDepth( final Locatable loc, final String sample ) {
+        this(loc.getContig(), loc.getStart(), sample, 0, 0, 0, 0);
     }
 
-    public LocusDepth( final String contig, final int position, final byte refCall,
+    public LocusDepth( final String contig, final int position, final String sample,
                        final int aDepth, final int cDepth, final int gDepth, final int tDepth ) {
+        Utils.nonNull(contig, "contig may not be null");
+        Utils.validateArg(position > 0, "starting position must be positive");
+        Utils.nonNull(sample, "sample must not be null");
+        Utils.validateArg(aDepth >= 0, "depth must be non-negative");
+        Utils.validateArg(cDepth >= 0, "depth must be non-negative");
+        Utils.validateArg(gDepth >= 0, "depth must be non-negative");
+        Utils.validateArg(tDepth >= 0, "depth must be non-negative");
         this.contig = contig;
         this.position = position;
-        this.refCall = refCall;
+        this.sample = sample;
         this.depths = new int[4];
         depths[0] = aDepth;
         depths[1] = cDepth;
         depths[2] = gDepth;
         depths[3] = tDepth;
-    }
-
-    public LocusDepth( final DataInputStream dis, final SAMSequenceDictionary dict ) throws IOException {
-        contig = dict.getSequence(dis.readInt()).getSequenceName();
-        position = dis.readInt();
-        refCall = dis.readByte();
-        depths = new int[4];
-        depths[0] = dis.readInt();
-        depths[1] = dis.readInt();
-        depths[2] = dis.readInt();
-        depths[3] = dis.readInt();
     }
 
     public void observe( final int idx ) {
@@ -70,28 +58,40 @@ public final class LocusDepth implements Feature {
         return position;
     }
 
-    public char getRefCall() {
-        return (char)refCall;
+    public String getSample() { return sample; }
+
+    public int getTotalDepth() { return depths[0] + depths[1] + depths[2] + depths[3]; }
+
+    // idx is index into "ACGT"
+    public int getDepth( final int idx ) { return depths[idx]; }
+
+    @Override
+    public LocusDepth extractSamples( final Set<String> sampleNames, final Object header ) {
+        return sampleNames.contains(sample) ? this : null;
     }
 
-    public int getADepth() { return depths[0]; }
-    public int getCDepth() { return depths[1]; }
-    public int getGDepth() { return depths[2]; }
-    public int getTDepth() { return depths[3]; }
-
-    public void write( final DataOutputStream dos,
-                       final SAMSequenceDictionary dict ) throws IOException {
-        dos.writeInt(dict.getSequenceIndex(contig));
-        dos.writeInt(position);
-        dos.writeByte(refCall);
-        dos.writeInt(depths[0]);
-        dos.writeInt(depths[1]);
-        dos.writeInt(depths[2]);
-        dos.writeInt(depths[3]);
+    @Override
+    public boolean equals( final Object obj ) {
+        if ( !(obj instanceof LocusDepth) ) return false;
+        return equals((LocusDepth)obj);
     }
 
+    public boolean equals( final LocusDepth that ) {
+        return this.position == that.position &&
+                this.depths[0] == that.depths[0] && this.depths[1] == that.depths[1] &&
+                this.depths[2] == that.depths[2] && this.depths[3] == that.depths[3] &&
+                Objects.equals(this.contig, that.contig) &&
+                Objects.equals(this.sample, that.sample);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(contig, position, sample, Arrays.hashCode(depths));
+    }
+
+    @Override
     public String toString() {
-        return contig + "\t" + position + "\t" + (char)refCall + "\t" +
-                depths[0] + "\t" + depths[1] + "\t" + depths[2] + "\t" + depths[3];
+        return sample + "@" + contig + ":" + position +
+                "[" + depths[0] + "," + depths[1] + "," + depths[2] + "," + depths[3] + "]";
     }
 }
