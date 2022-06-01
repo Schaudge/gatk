@@ -363,10 +363,15 @@ public final class AssemblyBasedCallerUtils {
         // Remove SNPs that are too close to assembled indels.
         final List<VariantContext> givenAllelesFiltered = givenAlleles.stream().filter(vc -> vc.isIndel() || assembledIndels.stream().noneMatch(indel -> vc.withinDistanceOf(indel, snpAdjacentToIndelLimit))).collect(Collectors.toList());
 
+        final int assembledVarSize = assembledVariants.size();
         for (final VariantContext givenVC : givenAllelesFiltered) {
             final VariantContext assembledVC = assembledVariants.get(givenVC.getStart());
             final int givenVCRefLength = givenVC.getReference().length();
             final Allele longerRef = (assembledVC == null || givenVCRefLength > assembledVC.getReference().length()) ? givenVC.getReference() : assembledVC.getReference();
+            // same (start) position has a variant event besides the force called (complex indels) alleles, we should omit this given allele.
+            // If we add this (potential false) positive alt allele, we would not generate the proper haplotype
+            // information by the following (phaseCall) logic. Modified By Schaudge King, 2021-09-04.
+            if (givenVC.isIndel() && assembledVarSize > 1) continue;
             final List<Allele> unassembledGivenAlleles = getAllelesNotPresentInAssembly(givenVC, assembledVC, givenVCRefLength, longerRef);
 
             final List<Allele> unassembledNonSymbolicAlleles = unassembledGivenAlleles.stream().filter(a -> {
@@ -414,10 +419,12 @@ public final class AssemblyBasedCallerUtils {
                 .collect(Collectors.groupingBy(VariantContext::getStart, Collectors.collectingAndThen(Collectors.toList(), AssemblyBasedCallerUtils::makeMergedVariantContext)));
 
         final List<Haplotype> assembledHaplotypes = assemblyResultSet.getHaplotypeList();
+        final int assembledVarSize = assembledVariants.size();
         for (final VariantContext givenVC : givenAlleles) {
             final VariantContext assembledVC = assembledVariants.get(givenVC.getStart());
             final int givenVCRefLength = givenVC.getReference().length();
             final Allele longerRef = (assembledVC == null || givenVCRefLength > assembledVC.getReference().length()) ? givenVC.getReference() : assembledVC.getReference();
+            if (givenVC.isIndel() && assembledVarSize > 1) continue;
             final List<Allele> unassembledGivenAlleles = getAllelesNotPresentInAssembly(givenVC, assembledVC, givenVCRefLength, longerRef);
 
             final List<Allele> unassembledNonSymbolicAlleles = unassembledGivenAlleles.stream().filter(a -> {
@@ -457,10 +464,6 @@ public final class AssemblyBasedCallerUtils {
         if (assembledVC == null) {
             unassembledGivenAlleles = givenVC.getAlternateAlleles();
         } else {
-            // same (start) position has a variant event besides the force called (complex indels) alleles, we should omit this given allele.
-            // If we add this (potential false) positive alt allele, we would not generate the proper haplotype
-            // information by the following (phaseCall) logic. Modified By Schaudge King, 2021-09-04.
-            if (givenVC.isIndel() && assembledVariants.size() > 1) continue;
             // map all alleles to the longest common reference
             final Set<Allele> assembledAlleleSet = new HashSet<>(longerRef.length() == assembledVC.getReference().length() ? assembledVC.getAlternateAlleles() :
                     ReferenceConfidenceVariantContextMerger.remapAlleles(assembledVC, longerRef));
