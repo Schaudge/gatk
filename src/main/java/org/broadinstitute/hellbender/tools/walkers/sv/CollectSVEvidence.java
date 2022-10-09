@@ -10,6 +10,7 @@ import htsjdk.variant.variantcontext.VariantContext;
 import org.broadinstitute.barclay.argparser.Argument;
 import org.broadinstitute.barclay.argparser.BetaFeature;
 import org.broadinstitute.barclay.argparser.CommandLineProgramProperties;
+import org.broadinstitute.barclay.help.DocumentedFeature;
 import org.broadinstitute.hellbender.cmdline.programgroups.StructuralVariantDiscoveryProgramGroup;
 import org.broadinstitute.hellbender.engine.*;
 import org.broadinstitute.hellbender.engine.filters.ReadFilter;
@@ -99,6 +100,7 @@ import static org.broadinstitute.hellbender.utils.read.ReadUtils.isBaseInsideAda
  * name(s) and a dictionary for the contigs.
  */
 @BetaFeature
+@DocumentedFeature
 @CommandLineProgramProperties(
         summary = "Gathers paired-end and split read evidence files for use in the GATK-SV pipeline. Output files " +
                 "are a file containing the location of and orientation of read pairs marked as discordant, and a " +
@@ -800,9 +802,11 @@ public class CollectSVEvidence extends ReadWalker {
         }
 
         public void close() {
-            while ( !siteDepthQueue.isEmpty() ) {
-                writer.write(siteDepthQueue.removeFirst());
-            }
+            do {
+                while ( !siteDepthQueue.isEmpty() ) {
+                    writer.write(siteDepthQueue.removeFirst());
+                }
+            } while ( readNextLocus() );
             writer.close();
         }
 
@@ -988,6 +992,11 @@ public class CollectSVEvidence extends ReadWalker {
             if ( depthEvidence != null ) {
                 writer.write(depthEvidence);
                 countCounter.addCount(depthEvidence.getCounts()[0]);
+                final int[] emptyCount = new int[1];
+                while ( intervalIterator.hasNext() ) {
+                    writer.write(new DepthEvidence(intervalIterator.next(), emptyCount));
+                    countCounter.addCount(0);
+                }
             }
             writer.close();
         }
