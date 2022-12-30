@@ -9,7 +9,7 @@ git checkout -b broadinstitute-master master(已存在本地分支名)
 ```
 ### git pull使用给定的参数运行git fetch，并调用git merge将检索到的分支头(master)合并到当前分支(broadinstitute-master)中. 
 ### 使用--rebase，它运行git rebase而不是git merge.
-### 命令git pull <远程仓库地址> <远程分支名>:<本地分支名>
+### pull命令使用参考: git pull <远程仓库地址> <远程分支名>:<本地分支名>
 ```
 git pull https://github.com/broadinstitute/gatk.git master(:broadinstitute-master)
 ```
