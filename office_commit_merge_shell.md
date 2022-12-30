@@ -2,15 +2,16 @@
 
 ## Step 1: From your project repository, check out a new branch and test the changes.
 ### 默认情况下 git checkout -b 将基于当前 HEAD 指向的分支创建新分支. 
-### git checkout -b <new-branch> <existing-branch>
-### git checkout 命令后面跟着 <existing-branch> 参数，然后新分支基于该指定的分支而不是当前 HEAD.
+### git checkout -b new-branch existing-branch
+### git checkout 命令后面跟着 existing-branch 参数，然后新分支基于该指定的分支而不是当前 HEAD.
 ```
-git checkout -b broadinstitute-master master
+git checkout -b broadinstitute-master master(已存在本地分支名)
 ```
 ### git pull使用给定的参数运行git fetch，并调用git merge将检索到的分支头(master)合并到当前分支(broadinstitute-master)中. 
 ### 使用--rebase，它运行git rebase而不是git merge.
+### 命令git pull <远程仓库地址> <远程分支名>:<本地分支名>
 ```
-git pull https://github.com/broadinstitute/gatk.git master
+git pull https://github.com/broadinstitute/gatk.git master(:broadinstitute-master)
 ```
 #### 参考提示如下 ...
 #### 接收对象中: 100% (568/568), 257.96 KiB | 236.00 KiB/s, 完成.
