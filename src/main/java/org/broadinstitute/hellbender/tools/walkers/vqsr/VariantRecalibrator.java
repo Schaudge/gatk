@@ -9,14 +9,9 @@ import htsjdk.variant.variantcontext.VariantContext;
 import htsjdk.variant.variantcontext.writer.VariantContextWriter;
 import htsjdk.variant.vcf.VCFHeader;
 import htsjdk.variant.vcf.VCFHeaderLine;
+import org.broadinstitute.barclay.argparser.*;
 import org.broadinstitute.barclay.help.DocumentedFeature;
 import org.broadinstitute.hellbender.cmdline.*;
-import org.broadinstitute.barclay.argparser.CommandLineException;
-import org.broadinstitute.barclay.argparser.CommandLineProgramProperties;
-import org.broadinstitute.barclay.argparser.Advanced;
-import org.broadinstitute.barclay.argparser.Argument;
-import org.broadinstitute.barclay.argparser.ArgumentCollection;
-import org.broadinstitute.barclay.argparser.Hidden;
 import org.broadinstitute.hellbender.engine.FeatureContext;
 import org.broadinstitute.hellbender.engine.FeatureInput;
 import org.broadinstitute.hellbender.engine.GATKPath;
@@ -172,6 +167,7 @@ public class VariantRecalibrator extends MultiVariantWalker {
     /**
      * These additional calls should be unfiltered and annotated with the error covariates that are intended to be used for modeling.
      */
+    @DeprecatedFeature(detail="This argument is not tested or used in any pipeline")
     @Argument(fullName="aggregate",
             shortName = "aggregate", doc="Additional raw input variants to be used in building the model",
             optional=true)
@@ -659,7 +655,7 @@ public class VariantRecalibrator extends MultiVariantWalker {
                     engine.evaluateData(dataManager.getData(), goodModel, false);
                     if (goodModel.failedToConverge) {
                         if (outputModel != null) {
-                            final GATKReport report = writeModelReport(goodModel, null, USE_ANNOTATIONS);
+                            final GATKReport report = writeModelReport(goodModel, null, dataManager.getAnnotationKeys());
                             saveModelReport(report, outputModel);
                         }
                         throw new UserException.VQSRPositiveModelFailure("Positive training model failed to converge.  One or more annotations " +
@@ -682,7 +678,7 @@ public class VariantRecalibrator extends MultiVariantWalker {
                 engine.evaluateData(dataManager.getData(), badModel, true);
 
                 if (outputModel != null) {
-                    final GATKReport report = writeModelReport(goodModel, badModel, USE_ANNOTATIONS);
+                    final GATKReport report = writeModelReport(goodModel, badModel, dataManager.getAnnotationKeys());
                     saveModelReport(report, outputModel);
                 }
 
@@ -715,7 +711,7 @@ public class VariantRecalibrator extends MultiVariantWalker {
                             goodModel,
                             badModel,
                             0.0,
-                            dataManager.getAnnotationKeys().toArray(new String[USE_ANNOTATIONS.size()]));
+                            dataManager.getAnnotationKeys().toArray(new String[dataManager.getAnnotationKeys().size()]));
                 }
 
                 if (VRAC.MODE == VariantRecalibratorArgumentCollection.Mode.INDEL) {

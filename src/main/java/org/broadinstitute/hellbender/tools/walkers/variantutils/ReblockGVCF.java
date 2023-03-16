@@ -135,6 +135,7 @@ public final class ReblockGVCF extends MultiVariantWalker {
     }
 
     @Advanced
+    @DeprecatedFeature(detail="This argument introduces 'holes', resulting in an invalid GVCF")
     @Argument(fullName=DROP_LOW_QUALS_ARG_NAME, shortName=DROP_LOW_QUALS_ARG_NAME, doc="Exclude variants and homRef blocks that are GQ0 from the reblocked GVCF to save space; drop low quality/uncalled alleles", optional = true)
     protected boolean dropLowQuals = false;
 
@@ -183,6 +184,8 @@ public final class ReblockGVCF extends MultiVariantWalker {
 
     private CachingIndexedFastaSequenceFile referenceReader;
 
+    private static final List<String> alleleBasedLengthAnnots = new ArrayList<>();
+
     public static class AlleleLengthComparator implements Comparator<Allele> {
         public int compare(Allele a1, Allele a2) {
             return a1.getBaseString().length() - a2.getBaseString().length();
@@ -211,6 +214,12 @@ public final class ReblockGVCF extends MultiVariantWalker {
         }
 
         final VCFHeader inputHeader = getHeaderForVariants();
+
+        if (treeScoreThreshold > 0 && inputHeader.getInfoHeaderLine(GATKVCFConstants.TREE_SCORE) == null) {
+            throw new UserException("-" + TREE_SCORE_THRESHOLD_LONG_NAME + " is set to value greater than 0: " + treeScoreThreshold
+                + ", but the " + GATKVCFConstants.TREE_SCORE + " annotation is not present in the input GVCF.");
+        }
+
         final Set<VCFHeaderLine> inputHeaders = inputHeader.getMetaDataInSortedOrder();
 
         final Set<VCFHeaderLine> headerLines = new HashSet<>(inputHeaders);
@@ -246,6 +255,15 @@ public final class ReblockGVCF extends MultiVariantWalker {
                 headerLines.add(inputHeader.getInfoHeaderLine(annotation));
             } else {
                 throw new UserException(String.format("%s is not in header of input GVCF but was requested to be kept by %s argument.", annotation, ANNOTATIONS_TO_KEEP_LONG_NAME));
+            }
+        }
+
+        //Allele length and Genotype length annotations need to be subset or removed if alleles are dropped so we need to parse the header for annotation count types
+        for(final VCFFormatHeaderLine formatHeaderLine : inputHeader.getFormatHeaderLines()) {
+            if(formatHeaderLine.getCountType().equals(VCFHeaderLineCount.A) ||
+                    formatHeaderLine.getCountType().equals(VCFHeaderLineCount.R) ||
+                    formatHeaderLine.getCountType().equals(VCFHeaderLineCount.G)) {
+                alleleBasedLengthAnnots.add(formatHeaderLine.getID());
             }
         }
 
@@ -592,7 +610,7 @@ public final class ReblockGVCF extends MultiVariantWalker {
         if(allelesNeedSubsetting && !keepAllAlts) {
             newAlleleSetUntrimmed.removeAll(allelesToDrop);
             final GenotypesContext gc = AlleleSubsettingUtils.subsetAlleles(variant.getGenotypes(), genotype.getPloidy(), variant.getAlleles(),
-                    newAlleleSetUntrimmed, null, GenotypeAssignmentMethod.USE_PLS_TO_ASSIGN);
+                    newAlleleSetUntrimmed, null, GenotypeAssignmentMethod.USE_PLS_TO_ASSIGN, alleleBasedLengthAnnots);
             if (gc.get(0).isHomRef() || !gc.get(0).hasGQ() || gc.get(0).getAlleles().contains(Allele.NO_CALL)) {  //could be low quality or no-call after subsetting
                 if (dropLowQuals) {
                     return null;
