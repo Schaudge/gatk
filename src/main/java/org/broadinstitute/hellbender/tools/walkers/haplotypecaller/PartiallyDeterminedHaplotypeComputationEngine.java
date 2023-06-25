@@ -1,17 +1,19 @@
 package org.broadinstitute.hellbender.tools.walkers.haplotypecaller;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Range;
+import com.google.common.collect.Sets;
 import htsjdk.samtools.CigarElement;
 import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.util.Locatable;
 import htsjdk.samtools.util.Tuple;
 import htsjdk.variant.variantcontext.Allele;
-import htsjdk.variant.variantcontext.VariantContext;
 import org.apache.commons.lang3.ArrayUtils;
 import org.broadinstitute.gatk.nativebindings.smithwaterman.SWOverhangStrategy;
 import org.broadinstitute.gatk.nativebindings.smithwaterman.SWParameters;
 import org.broadinstitute.hellbender.exceptions.GATKException;
-import org.broadinstitute.hellbender.utils.bwa.InvalidInputException;
+import org.broadinstitute.hellbender.utils.Utils;
+import org.broadinstitute.hellbender.utils.haplotype.Event;
 import org.broadinstitute.hellbender.utils.haplotype.EventMap;
 import org.broadinstitute.hellbender.utils.haplotype.Haplotype;
 import org.broadinstitute.hellbender.utils.haplotype.PartiallyDeterminedHaplotype;
@@ -20,38 +22,37 @@ import org.broadinstitute.hellbender.utils.read.CigarUtils;
 import org.broadinstitute.hellbender.utils.smithwaterman.SmithWatermanAligner;
 
 import java.util.*;
-import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * Class that manages the complicated steps involved in generating artifical haplotypes for the PDHMM:
+ * Class that manages the complicated steps involved in generating artificial haplotypes for the PDHMM:
  *
  * The primary method to this class is {@link #generatePDHaplotypes} which will be called with an existing AssemblyResultSet object
  * as well as the list of alleles that were found from the pileupcaller code. The method attempts to replace the existing haplotypes
- * from the provided result set object with new haplotyeps that were artificially generated from merging the assembled alleles
+ * from the provided result set object with new haplotypes that were artificially generated from merging the assembled alleles
  * with those found by the pileup caller. Crucially, the constructed haplotypes will be PartiallyDeterminedHaplotype objects
  * which have markers indicating what bases are "undetermined" and should not be penalized in the HMM when computing likelihoods
  * The method might hit one of a few heuristic barriers and chose to fallback on only the assembled haplotypes if the
  * processing would become too complicated.
  */
 public class PartiallyDeterminedHaplotypeComputationEngine {
-    final static int MAX_PD_HAPS_TO_GENERATE = 256*2;; //(2048 is illuminas #) (without optimizing the hmm to some degree this is probably unattainable)
-    final static int MAX_BRANCH_PD_HAPS = 128; //(128 is illuminas #)
-    final static int MAX_VAR_IN_EVENT_GROUP = 17; // (20 is illuminas #)
+    final static int MAX_PD_HAPS_TO_GENERATE = 256*2; //(2048 is Illumina's #) (without optimizing the hmm to some degree this is probably unattainable)
+    final static int MAX_BRANCH_PD_HAPS = 128; //(128 is Illumina's #)
+    final static int MAX_VAR_IN_EVENT_GROUP = 17; // (20 is Illumina's #)
 
     //To make this somewhat cleaner of a port from Illumina, we have two base spaces. R and U space. R space is vcf coordinate space,
     //U is a 0->N (N = region size) based space where Insertions are +0.5 and deletions are + 1 from their original position
 
-    // We use this comparator for haplotype construcion to make it slightly easier to build compound haplotypes (i.e. snp+insertion/deletion at the same anchor base)
-    public static final Comparator<VariantContext> HAPLOTYPE_SNP_FIRST_COMPARATOR = Comparator.comparingInt(VariantContext::getStart)
+    // We use this comparator for haplotype construction to make it slightly easier to build compound haplotypes (i.e. snp+insertion/deletion at the same anchor base)
+    public static final Comparator<Event> HAPLOTYPE_SNP_FIRST_COMPARATOR = Comparator.comparingInt(Event::getStart)
             // Decide arbitrarily so as not to accidentally throw away overlapping variants
-            .thenComparingInt(vc -> vc.getReference().length())
-            .thenComparingInt(vc -> vc.getAlternateAllele(0).length())
-            .thenComparing(vc -> vc.getAlternateAllele(0));
+            .thenComparingInt(e -> e.refAllele().length())
+            .thenComparingInt(e -> e.altAllele().length())
+            .thenComparing(e -> e.altAllele());
 
 
     /**
-     * The workhorse method for the PDHMM branching code. This method is responsible for the lionshare of the work in taking a list of
+     * The workhorse method for the PDHMM branching code. This method is responsible for the lion's share of the work in taking a list of
      * assembly haplotypes/alleles and the alleles found in the ColumnwiseDetection code and converting them into the artificial haplotypes
      * that are necessary for variant calling. This code might fail due to having too complex a site, if that happens it will return
      * the input sourceSet object without anything being changed.
@@ -69,115 +70,58 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
      *      5d. For each branch, build a PDHaplotype with the determined allele and the allowed variants for that branch.
      *
      * @param sourceSet AssemblyResultSet to be modified with the new haplotypes
-     * @param callingSpan Calling span to subset determined events to (to handle padding)
-     * @param referenceHaplotype Reference haplotype against which to build artifical haps
-     * @param assemblyVariants Assembly variants.
-     * @param pileupAllelesFoundShouldFilter Pileup alleles that should be filtered if they are part of the assembly
-     * @param pileupAllelesPassingFilters Pileup alleles that pass the heuristics to be included in genotyping
-     * @param snpAdjacentToIndelLimit If pileup allele snps are too close to assembled indels we thorw them out.
+     * @param badPileupEvents Pileup alleles that should be filtered if they are part of the assembly
+     * @param goodPileupEvents Pileup alleles that pass the heuristics to be included in genotyping
      * @param aligner SmithWatermanAligner to use for filtering out equivalent event sets
-     * @param swParameters Parameters for hap-hap comparisons
-     * @param makeDeterminedHapsInstead If true, generate regular haplotypes to be handed to the PairHMM (note this will result in a lot more failures due to combinitorial expansion)
-     * @param debugSite If true, print out all the details of how this code is functioning for debugging.
-     * @return unchanged assembly result set if failed, updated haplotyeps otherwise
+     * @return unchanged assembly result set if failed, updated haplotypes otherwise
      */
     public static AssemblyResultSet generatePDHaplotypes(final AssemblyResultSet sourceSet,
-                                                         final Locatable callingSpan,
-                                                         final Haplotype referenceHaplotype,
-                                                         final SortedSet<VariantContext> assemblyVariants,
-                                                         final List<VariantContext> pileupAllelesFoundShouldFilter,
-                                                         final List<VariantContext> pileupAllelesPassingFilters,
-                                                         final int snpAdjacentToIndelLimit,
+                                                         final Set<Event> badPileupEvents,
+                                                         final Collection<Event> goodPileupEvents,
                                                          final SmithWatermanAligner aligner,
-                                                         final SWParameters swParameters,
-                                                         final boolean makeDeterminedHapsInstead,
-                                                         final boolean debugSite) {
+                                                         final AssemblyBasedCallerArgumentCollection args) {
+        final Haplotype referenceHaplotype = sourceSet.getReferenceHaplotype();
+        final Locatable callingSpan = sourceSet.getRegionForGenotyping().getSpan();
 
-        //We currently don't support MNPs in here, assert nothing coming in IS a MNP
-        if (assemblyVariants.stream().anyMatch(VariantContext::isMNP) || pileupAllelesPassingFilters.stream().anyMatch(VariantContext::isMNP)) {
-            throw new InvalidInputException("PartiallyDeterminedHaplotypeComputationEngine currently doesn't support any MNP variants");
-        }
+        final PileupDetectionArgumentCollection pileupArgs = args.pileupDetectionArgs;
+        final boolean debug = pileupArgs.debugPileupStdout;
 
-        final TreeSet<VariantContext> variantsInOrder = new TreeSet<>(
-                HAPLOTYPE_SNP_FIRST_COMPARATOR);
-
-        // First we filter the assembly variants based on badness from the graph
-        for (VariantContext delVariant : pileupAllelesFoundShouldFilter) {
-
-            List<VariantContext> variantsToRemove = assemblyVariants.stream().filter(
-                    v -> v.getStart() == delVariant.getStart() &&
-                            delVariant.getReference().equals(v.getReference()) &&
-                            delVariant.getAlternateAllele(0).equals(v.getAlternateAllele(0))).collect(Collectors.toList());
-
-            if (!variantsToRemove.isEmpty()) {
-                if (debugSite) System.out.println("Removing assembly variants due to columnwise heuristics: " + variantsToRemove);
-                variantsToRemove.forEach(assemblyVariants::remove);
-            }
-        }
-
-        // Ignore any snps from pileups that were close to indels
-        final List<VariantContext> givenAllelesFiltered = pileupAllelesPassingFilters.stream()
-                .filter(vc -> vc.isIndel() ||
-                        assemblyVariants.stream().filter(VariantContext::isIndel).noneMatch(indel -> vc.withinDistanceOf(indel, snpAdjacentToIndelLimit))).collect(Collectors.toList());
-
-        // TODO make sure this TREE-SET is properly comparing the VCs
-        variantsInOrder.addAll(assemblyVariants);
-        variantsInOrder.addAll(givenAllelesFiltered);
-
-        if (debugSite) System.out.println("Variants to PDHapDetermination:\n"+
-                variantsInOrder.stream().map(PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int) referenceHaplotype.getStartPosition())).collect(Collectors.joining("\n")));
+        final List<Event> eventsInOrder = makeFinalListOfEventsInOrder(sourceSet, badPileupEvents, goodPileupEvents, referenceHaplotype, pileupArgs, debug);
 
         // TODO this is where we filter out if indels > 32 (a heuristic known from DRAGEN that is not implemented here)
-        List<VariantContext> vcsAsList = new ArrayList<>(variantsInOrder);
 
-        // NOTE: we iterate over this several times and expect it to be sorted.
-        Map<Double, List<VariantContext>> eventsByDRAGENCoordinates = new LinkedHashMap<>();
-        SortedMap<Integer, List<VariantContext>> variantsByStartPos = new TreeMap<>();
+        Map<Double, List<Event>> eventsByDRAGENCoordinates = eventsInOrder.stream()
+                .collect(Collectors.groupingBy(e -> dragenStart(e), LinkedHashMap::new, Collectors.toList()));
+        SortedMap<Integer, List<Event>> variantsByStartPos = eventsInOrder.stream()
+                .collect(Collectors.groupingBy(Event::getStart, TreeMap::new, Collectors.toList()));
         List<EventGroup> eventGroups = new ArrayList<>();
         int lastEventEnd = -1;
-        for (VariantContext vc : variantsInOrder) {
+        for (Event vc : eventsInOrder) {
             // Break everything into independent groups (don't worry about transitivitiy right now)
-            Double eventKey = vc.getStart() + (vc.isSimpleInsertion()? 0.5:0) + (vc.isSimpleDeletion()? 1 : 0) - referenceHaplotype.getStartPosition();
-            eventsByDRAGENCoordinates.putIfAbsent(eventKey, new ArrayList<>());
-            eventsByDRAGENCoordinates.get(eventKey).add(vc);
-            variantsByStartPos.putIfAbsent(vc.getStart(), new ArrayList<>());
-            variantsByStartPos.get(vc.getStart()).add(vc);
-            if (debugSite) System.out.println("testing:"+vc);
-            if (debugSite) System.out.println("EventKey:"+eventKey);
+            Double eventKey = dragenStart(vc) - referenceHaplotype.getStart();
             if (eventKey <= lastEventEnd + 0.5) {
                 eventGroups.get(eventGroups.size()-1).addEvent(vc);
             } else {
                 eventGroups.add(new EventGroup(vc));
             }
-            int newEnd = (int) (vc.getEnd() - referenceHaplotype.getStartPosition());
-            if (debugSite) System.out.println("LastEventEnd:"+lastEventEnd+"    newEventEnd:"+newEnd);
+            int newEnd =  (vc.getEnd() - referenceHaplotype.getStart());
             lastEventEnd = Math.max(newEnd, lastEventEnd);
         }
-        //Print the event groups
-        if (debugSite) eventsByDRAGENCoordinates.entrySet().stream().map(e -> {
-            return String.format("%.1f", e.getKey()) + " -> " + e.getValue().stream()
-                    .map(PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int) referenceHaplotype.getStartPosition()))
-                    .collect(Collectors.joining(","));
-        }).forEach(System.out::println);
+        eventGroupsMessage(referenceHaplotype, debug, eventsByDRAGENCoordinates);
 
         // Iterate over all events starting with all indels
 
-        List<List<VariantContext>> disallowedPairs = smithWatermanRealignPairsOfVariantsForEquivalentEvents(referenceHaplotype, aligner, swParameters, debugSite, variantsInOrder, vcsAsList);
-        if (debugSite) {
-            System.out.println("disallowed Variant pairs:");
-            disallowedPairs.stream().map(l -> l.stream().map(PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int) referenceHaplotype.getStartPosition())).collect(Collectors.joining("->"))).forEach(System.out::println);
-        }
+        List<List<Event>> disallowedPairs = smithWatermanRealignPairsOfVariantsForEquivalentEvents(referenceHaplotype, aligner, args.getHaplotypeToReferenceSWParameters(), debug, eventsInOrder);
+        dragenDisallowedGroupsMessage(referenceHaplotype.getStart(), debug, disallowedPairs);
+        Utils.printIf(debug, () -> "Event groups before merging:\n"+eventGroups.stream().map(eg -> eg.toDisplayString(referenceHaplotype.getStart())).collect(Collectors.joining("\n")));
 
-        if (debugSite) {
-            System.out.println("Event groups before merging:\n"+eventGroups.stream().map(eg -> eg.toDisplayString((int)referenceHaplotype.getStartPosition())).collect(Collectors.joining("\n")));
-        }
-        //Now that we have the disallowed groups, lets merge any of them from seperate groups:
+        //Now that we have the disallowed groups, lets merge any of them from separate groups:
         //TODO this is not an efficient way of doing this
-        for (List<VariantContext> pair : disallowedPairs) {
+        for (List<Event> pair : disallowedPairs) {
             EventGroup eventGrpLeft = null;
-            for (VariantContext event : pair) {
+            for (Event event : pair) {
                 EventGroup grpForEvent = eventGroups.stream().filter(grp -> grp.contains(event)).findFirst().get();
-                // If the event isn't in the same event group as its predicessor, merge this group with that one and
+                // If the event isn't in the same event group as its predecessor, merge this group with that one and
                 if (eventGrpLeft != grpForEvent) {
                     if (eventGrpLeft == null) {
                         eventGrpLeft = grpForEvent;
@@ -188,39 +132,33 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
                 }
             }
         }
-        if (debugSite) {
-            System.out.println("Event groups after merging:\n"+eventGroups.stream().map(eg -> eg.toDisplayString((int)referenceHaplotype.getStartPosition())).collect(Collectors.joining("\n")));
-        }
+        Utils.printIf(debug,() -> "Event groups after merging:\n"+eventGroups.stream().map(eg -> eg.toDisplayString(referenceHaplotype.getStart())).collect(Collectors.joining("\n")));
 
-        //Now we have finished with the work of merging event groups transitively by position and mutually exclusiveness. Now every group should be entirely independant of one another:
-        if (eventGroups.stream().map(eg -> eg.populateBitset(disallowedPairs)).anyMatch(b->!b)) {
-            // if any of our event groups is too large, abort.
-            if (debugSite ) System.out.println("Found event group with too many variants! Aborting haplotype building");
+        // if any of our merged event groups is too large, abort.
+        if (eventGroups.stream().anyMatch(eg -> eg.size() > MAX_VAR_IN_EVENT_GROUP)) {
+            Utils.printIf(debug, () -> "Found event group with too many variants! Aborting haplotype building");
             return sourceSet;
-        };
+        }
+        eventGroups.forEach(eg -> eg.populateBitset(disallowedPairs));
 
         Set<Haplotype> outputHaplotypes = new LinkedHashSet<>();
-        if (makeDeterminedHapsInstead) {
+        if (pileupArgs.determinePDHaps) {
             // only add the reference haplotype if we are producing regular haplotype objects (not PD haplotypes for the haplotype alleles)
             outputHaplotypes.add(referenceHaplotype);
         }
 
-        //Iterate over very VCF start position in R space
-        List<Map.Entry<Integer, List<VariantContext>>> entriesRInOrder = new ArrayList<>(variantsByStartPos.entrySet());
         /**
          * Overall Loop:
          * Iterate over every cluster of variants with the same start position.
          */
-        for (int indexOfDeterminedInR = 0; indexOfDeterminedInR < entriesRInOrder.size(); indexOfDeterminedInR++) {
-            Map.Entry<Integer, List<VariantContext>> variantSiteGroup = entriesRInOrder.get(indexOfDeterminedInR);
-            if (debugSite) System.out.println("working with variants of the group: " + variantSiteGroup);
-            // Skip
-            if (entriesRInOrder.get(indexOfDeterminedInR).getKey() < callingSpan.getStart() || entriesRInOrder.get(indexOfDeterminedInR).getKey() > callingSpan.getEnd()) {
-                if (debugSite) System.out.println("Skipping determined hap construction! otside of span: "+callingSpan);
+        for (final int thisEventGroupStart : variantsByStartPos.keySet()) {   // it's a SortedMap -- iterating over its keyset is okay!
+            final List<Event> allEventsHere = variantsByStartPos.get(thisEventGroupStart);
+            Utils.printIf(debug, () -> "working with variants: " + allEventsHere + " at position " + thisEventGroupStart);
+
+            if (!Range.closed(callingSpan.getStart(), callingSpan.getEnd()).contains(thisEventGroupStart)) {
+                Utils.printIf(debug, () -> "Skipping determined hap construction! Outside of span: " + callingSpan);
                 continue;
             }
-
-            final List<VariantContext> determinedVariants = variantSiteGroup.getValue();
 
             /**
              * Determined Event Loop:
@@ -228,26 +166,22 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
              *
              * NOTE: we skip the reference allele in the event that we are making determined haplotypes instead of undetermined haplotypes
              */
-            for (int IndexOfAllele = (makeDeterminedHapsInstead?0:-1); IndexOfAllele < determinedVariants.size(); IndexOfAllele++) { //note -1 for I here corresponds to the reference allele at this site
-                if (debugSite) System.out.println("Working with allele at site: "+(IndexOfAllele ==-1? "[ref:"+(variantSiteGroup.getKey()-referenceHaplotype.getStartPosition())+"]" : PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int)referenceHaplotype.getStartPosition()).apply(determinedVariants.get(IndexOfAllele))));
+            for (int determinedAlleleIndex = (pileupArgs.determinePDHaps?0:-1); determinedAlleleIndex < allEventsHere.size(); determinedAlleleIndex++) { //note -1 for I here corresponds to the reference allele at this site
+                final boolean isRef = determinedAlleleIndex == -1;
+                final Event determinedEventToTest = allEventsHere.get(isRef ? 0 : determinedAlleleIndex);
+                Utils.printIf(debug, () -> "Working with allele at site: "+(isRef? "[ref:"+(thisEventGroupStart-referenceHaplotype.getStart())+"]" : PartiallyDeterminedHaplotype.getDRAGENDebugEventString(referenceHaplotype.getStart()).apply(determinedEventToTest)));
                 // This corresponds to the DRAGEN code for
                 // 0 0
                 // 0 1
                 // 1 0
-                final boolean isRef = IndexOfAllele == -1;
-                final VariantContext determinedEventToTest = determinedVariants.get(isRef ? 0 : IndexOfAllele);
+
 
                 /*
-                 * Here we handle any of the necessary work to deal with the event groups and maybe forming compund branches out of the groups
+                 * Here we handle any of the necessary work to deal with the event groups and maybe forming compound branches out of the groups
                  */
-                //Set Determined pairs:
-                List<Tuple<VariantContext, Boolean>> determinedPairs = new ArrayList<>();
-                for(int j = 0; j < determinedVariants.size(); j++) {
-                    determinedPairs.add(new Tuple<>(determinedVariants.get(j), IndexOfAllele == j));
-                }
 
                 // Loop over eventGroups, have each of them return a list of VariantContexts
-                List<Set<VariantContext>> branchExcludeAlleles = new ArrayList<>();
+                List<Set<Event>> branchExcludeAlleles = new ArrayList<>();
                 branchExcludeAlleles.add(new HashSet<>()); // Add the null branch (assuming no exclusions)
 
                 /* Note for future posterity:
@@ -259,13 +193,13 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
                  */
                 for(EventGroup group : eventGroups ) {
                     if (group.causesBranching()) {
-                        List<List<Tuple<VariantContext, Boolean>>> groupVCs = group.getVariantGroupsForEvent(determinedPairs, true);
+                        List<List<Tuple<Event, Boolean>>> groupVCs = group.getVariantGroupsForEvent(allEventsHere, determinedAlleleIndex, true);
                         // Combinatorially expand the branches as necessary
-                        List<Set<VariantContext>> newBranchesToAdd = new ArrayList<>();
-                        for (Set<VariantContext> excludedVars : branchExcludeAlleles) {
+                        List<Set<Event>> newBranchesToAdd = new ArrayList<>();
+                        for (Set<Event> excludedVars : branchExcludeAlleles) {
                             //For every exclude group, fork it by each subset we have:
                             for (int i = 1; i < groupVCs.size(); i++) { //NOTE: iterate starting at 1 here because we special case that branch at the end
-                                Set<VariantContext> newSet = new HashSet<>(excludedVars);
+                                Set<Event> newSet = new HashSet<>(excludedVars);
                                 groupVCs.get(i).stream().filter(t -> !t.b).forEach(t -> newSet.add(t.a));
                                 newBranchesToAdd.add(newSet);
                             }
@@ -277,99 +211,71 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
                         branchExcludeAlleles.addAll(newBranchesToAdd);
 
                         if (branchExcludeAlleles.size() > MAX_BRANCH_PD_HAPS) {
-                            if (debugSite ) System.out.println("Found too many branches for variants at: "+determinedEventToTest.getStart()+" aborting and falling back to Assembly Varinats!");
+                            Utils.printIf(debug, () -> "Found too many branches for variants at: " + determinedEventToTest.getStart() + " aborting and falling back to Assembly Variants!");
                             return sourceSet;
                         }
                     }
                 }
 
-                if (debugSite) {
-                    System.out.println("Branches:");
-                    for (int i = 0; i < branchExcludeAlleles.size(); i++) {
-                        final int ifinal = i;
-                        System.out.println("Branch "+i+" VCs:");
-                        System.out.println("exclude:"+branchExcludeAlleles.get(i).stream().map(PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int)referenceHaplotype.getStartPosition())).collect(Collectors.joining("->")));
-                        //to match dragen debug output for personal sanity
-                        System.out.println("include:"+variantsInOrder.stream().filter(variantContext -> !branchExcludeAlleles.get(ifinal).contains(variantContext)).map(PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int)referenceHaplotype.getStartPosition())).collect(Collectors.joining("->")));
-                    }
-                }
+                branchExcludeAllelesMessage(referenceHaplotype, debug, eventsInOrder, branchExcludeAlleles);
 
 
                 /**
                  * Now handle each branch independently of the others. (the logic is the same in every case except we must ensure that none of the excluded alleles get included when constructing haps.
                  */
-                for (Set<VariantContext> excludeEvents : branchExcludeAlleles) {
+                for (Set<Event> excludeEvents : branchExcludeAlleles) {
 
                     List<Haplotype> branchHaps = new ArrayList<>();
-                    List<VariantContext> newBranch = new ArrayList<>();
+                    List<Event> newBranch = new ArrayList<>();
 
                     // Handle the simple case of making PD haplotypes
-                    if (!makeDeterminedHapsInstead) {
-                        for (int secondRIndex = 0; secondRIndex < entriesRInOrder.size(); secondRIndex++) {
-                            if (secondRIndex != indexOfDeterminedInR) {
+                    if (!pileupArgs.determinePDHaps) {
+                        for (final int otherEventGroupStart : variantsByStartPos.keySet()) {
+                            if (otherEventGroupStart == thisEventGroupStart) {
+                                newBranch.add(determinedEventToTest);
+                            } else {
                                 // We know here that nothing illegally overlaps because there are no groups.
                                 // Also exclude any events that overlap the determined allele since we cant construct them (also this stops compound alleles from being formed)
                                 // NOTE: it is important that we allow reference alleles to overlap undetermined variants as it leads to mismatches against DRAGEN otherwise.
-                                entriesRInOrder.get(secondRIndex).getValue().stream()
-                                        .filter(vc -> !excludeEvents.contains(vc))
-                                        .forEach(newBranch::add);
-                            } else {
-                                newBranch.add(determinedEventToTest);
+                                variantsByStartPos.get(otherEventGroupStart).stream().filter(vc -> !excludeEvents.contains(vc)).forEach(newBranch::add);
                             }
                         }
                         newBranch.sort(HAPLOTYPE_SNP_FIRST_COMPARATOR);
                         PartiallyDeterminedHaplotype newPDHaplotypeFromEvents = createNewPDHaplotypeFromEvents(referenceHaplotype, determinedEventToTest, isRef, newBranch);
-                        newPDHaplotypeFromEvents.setAllDeterminedEventsAtThisSite(determinedVariants); // accounting for determined variants for later in case we are in optimization mode
+                        newPDHaplotypeFromEvents.setAllDeterminedEventsAtThisSite(allEventsHere); // accounting for determined variants for later in case we are in optimization mode
                         branchHaps.add(newPDHaplotypeFromEvents);
 
                     } else {
                         // TODO currently this approach doesn't properly handle a bunch of duplicate events...
                         // If we are producing determined bases, then we want to enforce that every new event at least has THIS event as a variant.
-                        List<List<VariantContext>> variantGroupsCombinatorialExpansion = new ArrayList<>();
-                        variantGroupsCombinatorialExpansion.add(new ArrayList<>());
-                        // We can drastically cut down on combinatorial expansion here by saying each allele is the FIRST variant in the list, thus preventing double counting.
-                        for (int secondRIndex = indexOfDeterminedInR; secondRIndex < entriesRInOrder.size(); secondRIndex++) {
-                            if (variantGroupsCombinatorialExpansion.size() > MAX_BRANCH_PD_HAPS) {
-                                if(debugSite ) System.out.println("Too many branch haplotypes ["+variantGroupsCombinatorialExpansion.size()+"] generated from site, falling back on assebmly variants!");
-                                return sourceSet;
-                            }
+                        List<List<Event>> growingEventGroups = new ArrayList<>();
+                        growingEventGroups.add(new ArrayList<>());
+                        for (final int otherEventGroupStart : variantsByStartPos.keySet()) {
                             // Iterate through the growing combinatorial expansion of haps, split it into either having or not having the variant.
-                            if (secondRIndex == indexOfDeterminedInR) {
-                                for (List<VariantContext> hclist : variantGroupsCombinatorialExpansion) {
-                                    hclist.add(determinedEventToTest);
-                                }
-                            // Othewise make sure to include the combinatorial expansion of events at the other site
-                            } else {
-                                List<List<VariantContext>> hapsPerVCsAtRSite = new ArrayList<>();
-                                for (VariantContext vc : entriesRInOrder.get(secondRIndex).getValue()) {
-                                    for (List<VariantContext> hclist : variantGroupsCombinatorialExpansion) {
-                                        if (!excludeEvents.contains(vc)) {
-                                            List<VariantContext> newList = new ArrayList<>(hclist);
-                                            newList.add(vc);
-                                            hapsPerVCsAtRSite.add(newList);
-                                        }
-                                    }
-                                }
-                                //Add them after to prevent accidentally adding duplicates of events at a site
-                                variantGroupsCombinatorialExpansion.addAll(hapsPerVCsAtRSite);
+                            if (growingEventGroups.size() > MAX_BRANCH_PD_HAPS) {
+                                Utils.printIf(debug, () -> "Too many branch haplotypes ["+growingEventGroups.size()+"] generated from site, falling back on assembly variants!");
+                                return sourceSet;
+                            } else if (otherEventGroupStart == thisEventGroupStart) {
+                                growingEventGroups.forEach(group -> group.add(determinedEventToTest));
+                            } else if (thisEventGroupStart < otherEventGroupStart) {
+                                variantsByStartPos.get(otherEventGroupStart).stream()
+                                        .filter(event -> !excludeEvents.contains(event))
+                                        .flatMap(event -> growingEventGroups.stream().map(group -> growEventGroup(group, event)))
+                                        .forEach(growingEventGroups::add);
                             }
                         }
 
-                        for (List<VariantContext> subset : variantGroupsCombinatorialExpansion) {
+                        for (List<Event> subset : growingEventGroups) {
                             subset.sort(HAPLOTYPE_SNP_FIRST_COMPARATOR);
-                            if (debugSite) System.out.println("Construcing Hap From Events:"+ subset.stream().map(PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int) referenceHaplotype.getStartPosition())).collect(Collectors.joining("->")));
+                            Utils.printIf(debug, () -> "Constructing Hap From Events:"+ formatEventsLikeDragenLogs(subset,  referenceHaplotype.getStart()));
                             branchHaps.add(constructHaplotypeFromVariants(referenceHaplotype, subset, true));
                         }
                     }
-                    // Add the branch haps to the results:
-                    if (debugSite) {
-                        System.out.println("Constructed Haps for Branch"+excludeEvents.stream().map(PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int) referenceHaplotype.getStartPosition())).collect(Collectors.joining(",")) + ":");
-                        System.out.println(branchHaps.stream().map(h -> h.getCigar() + " " + h.toString()).collect(Collectors.joining("\n")));
-                    }
+                    branchHaplotypesDebugMessage(referenceHaplotype, debug, excludeEvents, branchHaps);
 
                     outputHaplotypes.addAll(branchHaps);
                     if (outputHaplotypes.size() > MAX_PD_HAPS_TO_GENERATE) {
-                        if (debugSite) System.out.println("Too many Haps ["+outputHaplotypes.size()+"] generated at this site! Aborting!");
+                        Utils.printIf(debug,() -> "Too many Haps ["+outputHaplotypes.size()+"] generated at this site! Aborting!");
                         return sourceSet;
                     }
                 }
@@ -377,30 +283,57 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
         }
 
         if (outputHaplotypes.size() > MAX_PD_HAPS_TO_GENERATE) {
-            if (debugSite) System.out.println("Too many branch haplotypes found, aborting ["+outputHaplotypes.size()+"]");
+            Utils.printIf(debug,() -> "Too many branch haplotypes found, aborting ["+outputHaplotypes.size()+"]");
             return sourceSet;
         }
         sourceSet.storeAssemblyHaplotypes();
-        Set<Haplotype> result = new LinkedHashSet<>();
+
         // TODO this is an entirely unnecessary step that can be done away with but i leave in because it makes debugging against previous versions much easier.
-        outputHaplotypes.stream().sorted(new Comparator<Haplotype>() {
-            @Override
-            public int compare(Haplotype o1, Haplotype o2) {
-                return new String(o1.getBases()).compareTo(new String(o2.getBases()));
-            }
-        }).forEach(h -> result.add(h));
+        final Set<Haplotype> result = outputHaplotypes.stream().sorted(Comparator.comparing(Haplotype::getBaseString)).collect(Collectors.toCollection(LinkedHashSet::new));
         sourceSet.replaceAllHaplotypes(result);
-        if (debugSite) System.out.println("Constructed Haps for Branch"+sourceSet.getHaplotypeList().stream().map(Haplotype::toString).collect(Collectors.joining("\n")));
-        if (!makeDeterminedHapsInstead) {
+        Utils.printIf(debug, () -> "Constructed Haps for Branch"+sourceSet.getHaplotypeList().stream().map(Haplotype::toString).collect(Collectors.joining("\n")));
+        if (!pileupArgs.determinePDHaps) {
             // Setting a boolean on the source-set to indicate to downstream code that we have PD haplotypes
             sourceSet.setPartiallyDeterminedMode();
         }
-        if (debugSite ) System.out.println("Returning "+outputHaplotypes.size()+" to the HMM");
+        Utils.printIf(debug, () -> "Returning "+outputHaplotypes.size()+" to the HMM");
         return sourceSet;
     }
 
     /**
-     * Helper method that handles one of the Heuristics baked by DRAGEN into this artifical haplotype genration code.
+     * Starting from all events from an AssemblyResultSet, remove "bad" events from the pileups that should be filtered
+     * according to heuristic in PileupBasedAlleles, then add "good" events from the pileups, excluding SNPs that are too close
+     * to assembled indels.
+     *
+     * @param sourceSet             AssemblyResultSet from which the original set of assembled events comes
+     * @param badPileupEvents       Events found in pileups that fail certain heuristic conditions and need to be removed
+     * @param goodPileupEvents      Events found in pileups that pass ceetain other heuristic and are to be added
+     * @param referenceHaplotype    Only used for a debug message to match DRAGEN
+     * @param pileupArgs            Arguments containing, in particular, the distance that "good" pileup SNPs must be
+     *                              From any assembled indels in order to be added
+     * @param debug                 Controls whether to output certain debugging messages
+     * @return                      A final sorted list of events
+     */
+    private static List<Event> makeFinalListOfEventsInOrder(final AssemblyResultSet sourceSet, final Set<Event> badPileupEvents,
+                                                            final Collection<Event> goodPileupEvents, final Haplotype referenceHaplotype,
+                                                            final PileupDetectionArgumentCollection pileupArgs, final boolean debug) {
+        // start with all assembled events, using maxMnpDistance = 0 because we currently don't support MNPs here,
+        // then remove bad pileup events and add good pileup events other than SNPs too close to indels
+        removeBadPileupEventsMessage(debug, sourceSet, badPileupEvents);
+        final Set<Event> passingEvents = sourceSet.getVariationEvents(0).stream()
+                .filter(event -> !badPileupEvents.contains(event))
+                .collect(Collectors.toSet());
+        final List<Event> indels = passingEvents.stream().filter(Event::isIndel).toList();
+        goodPileupEvents.stream().filter(event -> !passingEvents.contains(event)).filter(event -> event.isIndel() ||
+                        indels.stream().noneMatch(indel -> event.withinDistanceOf(indel, pileupArgs.snpAdjacentToAssemblyIndel)))
+                .forEach(passingEvents::add);
+        final List<Event> eventsInOrder = passingEvents.stream().sorted(HAPLOTYPE_SNP_FIRST_COMPARATOR).toList();
+        finalEventsListMessage(referenceHaplotype.getStart(), debug, eventsInOrder);
+        return eventsInOrder;
+    }
+
+    /**
+     * Helper method that handles one of the Heuristics baked by DRAGEN into this artificial haplotype generation code.
      *
      * To help mitigate the risk of generating combinatorial haplotypes with SNPs/Indels that that might or might not add
      * up to equivalent events, DRAGEN enforces that events are NOT allowed to be present in the same haplotype if they
@@ -408,31 +341,31 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
      *
      * To cut down on the complexity of the task; we (and DRAGEN) follow this procedure:
      * 1. look at all sets of 2 variants where at least one is an indel and none overlap.
-     *    a) for each set construct an artifical haplotype with only those two variants on it
-     *    b) SmithWtarman align it against the reference to generate the cheapest cigar string representation
+     *    a) for each set construct an artificial haplotype with only those two variants on it
+     *    b) Smith Waterman align it against the reference to generate the cheapest cigar string representation
      *    c) Construct the event map for the new artificial haplotype, if any events in the new event map are in our list of variants
      *       but are NOT the constituent events that were used to construct the haplotype then disallow the pair
      * 2. Look at all sets of 3 variants that do not contain disallowed pairs found in step 1.
-     *    a-b-c) repeat steps 1a,1b,and 1c on the 3 evetn sets
+     *    a-b-c) repeat steps 1a,1b,and 1c on the 3 event sets
      *
      * @return A list of lists of variant contexts that correspond to disallowed groups. This list may be empty if none are found.
      */
-    private static List<List<VariantContext>> smithWatermanRealignPairsOfVariantsForEquivalentEvents(Haplotype referenceHaplotype, SmithWatermanAligner aligner, SWParameters swParameters, boolean debugSite, TreeSet<VariantContext> variantsInOrder, List<VariantContext> vcsAsList) {
-        List<List<VariantContext>> disallowedPairs = new ArrayList<>();
+    private static List<List<Event>> smithWatermanRealignPairsOfVariantsForEquivalentEvents(Haplotype referenceHaplotype, SmithWatermanAligner aligner, SWParameters swParameters, boolean debug, List<Event> eventsInOrder) {
+        List<List<Event>> disallowedPairs = new ArrayList<>();
 
         //Iterate over all 2 element permutations in which one element is an indel and test for alignments
-        for (int i = 0; i < vcsAsList.size(); i++) {
-            final VariantContext firstEvent = vcsAsList.get(i);
+        for (int i = 0; i < eventsInOrder.size(); i++) {
+            final Event firstEvent = eventsInOrder.get(i);
             if (firstEvent.isIndel()) {
                 // For every indel, make every 2-3 element subset (without overlapping) of variants to test for equivalency
-                for (int j = 0; j < vcsAsList.size(); j++) {
-                    final VariantContext secondEvent = vcsAsList.get(j);
-                    // Don't compare myslef, any overlappers to myself, or indels i've already examined me (to prevent double counting)
-                    if (j != i && !eventsOverlapForPDHapsCode(firstEvent, secondEvent, true) && ((!secondEvent.isIndel()) || j > i)) {
-                        final List<VariantContext> events = new ArrayList<>(Arrays.asList(firstEvent, secondEvent));
+                for (int j = 0; j < eventsInOrder.size(); j++) {
+                    final Event secondEvent = eventsInOrder.get(j);
+                    // Don't compare the event to itself, to overlapping events, or to indels I've already examined me (to prevent double counting)
+                    if (j != i && !eventsOverlapForPDHapsCode(firstEvent, secondEvent) && ((!secondEvent.isIndel()) || j > i)) {
+                        final List<Event> events = new ArrayList<>(Arrays.asList(firstEvent, secondEvent));
                         events.sort(HAPLOTYPE_SNP_FIRST_COMPARATOR);
-                        if (debugSite) System.out.println("Testing events: "+ events.stream().map(PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int) referenceHaplotype.getStartPosition())).collect(Collectors.joining("->")));
-                        if (constructArtificialHaplotypeAndTestEquivalentEvents(referenceHaplotype, aligner, swParameters, variantsInOrder, events, debugSite)) {
+                        Utils.printIf(debug, () -> "Testing events: "+ formatEventsLikeDragenLogs(events,  referenceHaplotype.getStart()));
+                        if (constructArtificialHaplotypeAndTestEquivalentEvents(referenceHaplotype, aligner, swParameters, eventsInOrder, events, debug)) {
                             disallowedPairs.add(events);
                         }
                     }
@@ -443,32 +376,32 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
         //TODO NOTE: there are some discrepancies with the iteration over 3x variants in some complicated cases involving
         //TODO       lots of transitively disallowed pairs. Hopefully this is a minor effect.
         //Now iterate over all 3 element pairs and make sure none of the
-        for (int i = 0; i < vcsAsList.size(); i++) {
-            final VariantContext firstEvent = vcsAsList.get(i);
+        for (int i = 0; i < eventsInOrder.size(); i++) {
+            final Event firstEvent = eventsInOrder.get(i);
             if (firstEvent.isIndel()) {
                 // For every indel, make every 2-3 element subset (without overlapping) of variants to test for equivalency
-                for (int j = 0; j < vcsAsList.size(); j++) {
-                    final VariantContext secondEvent = vcsAsList.get(j);
-                    // Don't compare myslef, any overlappers to myself, or indels i've already examined me (to prevent double counting)
-                    if (j != i && !eventsOverlapForPDHapsCode(firstEvent, secondEvent, true) && ((!secondEvent.isIndel()) || j > i)) {
-                        // if i and j area lready disalowed keep going
+                for (int j = 0; j < eventsInOrder.size(); j++) {
+                    final Event secondEvent = eventsInOrder.get(j);
+                    // Don't compare the event to itself, to overlapping events, or to indels I've already examined me (to prevent double counting)
+                    if (j != i && !eventsOverlapForPDHapsCode(firstEvent, secondEvent) && ((!secondEvent.isIndel()) || j > i)) {
+                        // if i and j area already disallowed keep going
                         if (disallowedPairs.stream().anyMatch(p -> p.contains(firstEvent) && p.contains(secondEvent))) {
                             continue;
                         }
-                        final List<VariantContext> events = new ArrayList<>(Arrays.asList(firstEvent, secondEvent));
+                        final List<Event> events = new ArrayList<>(Arrays.asList(firstEvent, secondEvent));
                         // If our 2 element arrays weren't inequivalent, test subsets of 3 including this:
-                        for (int k = j+1; k < vcsAsList.size(); k++) {
-                            final VariantContext thirdEvent = vcsAsList.get(k);
-                            if (k != i && !eventsOverlapForPDHapsCode(thirdEvent, firstEvent, true) && !eventsOverlapForPDHapsCode(thirdEvent, secondEvent, true)) {
+                        for (int k = j+1; k < eventsInOrder.size(); k++) {
+                            final Event thirdEvent = eventsInOrder.get(k);
+                            if (k != i && !eventsOverlapForPDHapsCode(thirdEvent, firstEvent) && !eventsOverlapForPDHapsCode(thirdEvent, secondEvent)) {
                                 // if k and j or k and i are disallowed, keep looking
                                 if (disallowedPairs.stream().anyMatch(p -> (p.contains(firstEvent) && p.contains(thirdEvent)) || (p.contains(secondEvent) && p.contains(thirdEvent)))) {
                                     continue;
                                 }
-                                List<VariantContext> subList = new ArrayList<>(events);
+                                List<Event> subList = new ArrayList<>(events);
                                 subList.add(thirdEvent);
                                 subList.sort(HAPLOTYPE_SNP_FIRST_COMPARATOR);
-                                if (debugSite) System.out.println("Testing events: " + subList.stream().map(PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int) referenceHaplotype.getStartPosition())).collect(Collectors.joining("->")));
-                                if (constructArtificialHaplotypeAndTestEquivalentEvents(referenceHaplotype, aligner, swParameters, variantsInOrder, subList, debugSite)) {
+                                Utils.printIf(debug,() ->"Testing events: " + formatEventsLikeDragenLogs(subList,  referenceHaplotype.getStart()));
+                                if (constructArtificialHaplotypeAndTestEquivalentEvents(referenceHaplotype, aligner, swParameters, eventsInOrder, subList, debug)) {
                                     disallowedPairs.add(subList);
                                 }
                             }
@@ -482,26 +415,20 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
     }
 
     /**
-     * Overlaps method to handle indels and snps correctly. Specifically for this branching codes purposes, SNPS never overlap other SNPS,
+     * Overlaps method to handle indels and snps correctly. Specifically for this branching codes purposes,
      * indels don't overlap on their anchor bases and insertions don't overlap anything except deletions spanning them or other insertions
      * at the same base.
      *
-     * @param snpsOverlap if false, don't ever evaluate snps as overlapping other snps (we do this because sometimes we need to construct artifical haps where we don't allow overlapping)
      */
-    static boolean eventsOverlapForPDHapsCode(VariantContext vc1, VariantContext vc2, boolean snpsOverlap){
-        if (!snpsOverlap && vc2.isSNP() && vc1.isSNP()) {
+    @VisibleForTesting
+    static boolean eventsOverlapForPDHapsCode(Event e1, Event e2){
+        if (!e1.getContig().equals(e2.getContig())) {
             return false;
         }
-        if (!vc1.getContig().equals(vc2.getContig())) {
-            return false;
-        }
-        double vc1start = vc1.isIndel() ? (vc1.isSimpleDeletion() ? vc1.getStart() + 1 : vc1.getStart() + 0.5) : vc1.getStart();
-        double vc1end = vc1.isSimpleInsertion() ? vc1.getEnd() + 0.5 : vc1.getEnd();
-        double vc2start = vc2.isIndel() ? (vc2.isSimpleDeletion() ? vc2.getStart() + 1 : vc2.getStart() + 0.5) : vc2.getStart();
-        double vc2end = vc2.isSimpleInsertion() ? vc2.getEnd() + 0.5 : vc2.getEnd();
 
-        //Pulled directly from CoordMath.java (not using here because of doubles)
-        return (vc2start >= vc1start && vc2start <= vc1end) || (vc2end >=vc1start && vc2end <= vc1end) || vc1start >= vc2start && vc1end <= vc2end;
+        double end1 = e1.getEnd() + (e1.isSimpleInsertion() ? 0.5 : 0);
+        double end2 = e2.getEnd() + (e2.isSimpleInsertion() ? 0.5 : 0);
+        return !(dragenStart(e1) > end2 || dragenStart(e2) > end1);
     }
 
 
@@ -511,7 +438,7 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
      * The method is as follows, construct and artificial haplotype of the provided events, then realign it vs the reference and test
      * if any of the resulting variants are present in the inputs (but doesn't match)
      *
-     * NOTE: as per DRAGEN impelmeneation, a set is considered invalid if we re-SmithWaterman align and we get:
+     * NOTE: as per DRAGEN implementation, a set is considered invalid if we re-SmithWaterman align and we get:
      * 1) A different result hap from the ref + alleles we added
      * 2) At least one of the resulting events is NOT in the initial set of alleles we added to the ref
      * 3) Was at least one of the resulting alleles a variant we discovered in the pileups/assembly
@@ -523,11 +450,11 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
      * @return true if we SHOULD NOT allow the eventsToTest alleles to appear as alleles together in determined haplotypes
      */
     @VisibleForTesting
-    private static boolean constructArtificialHaplotypeAndTestEquivalentEvents(Haplotype referenceHaplotype, SmithWatermanAligner aligner, SWParameters swParameters, TreeSet<VariantContext> vcs, List<VariantContext> eventsToTest, boolean debugSite) {
+    private static boolean constructArtificialHaplotypeAndTestEquivalentEvents(Haplotype referenceHaplotype, SmithWatermanAligner aligner, SWParameters swParameters, Collection<Event> events, List<Event> eventsToTest, boolean debug) {
         final Haplotype realignHap = constructHaplotypeFromVariants(referenceHaplotype, eventsToTest, false);
         //Special case to capture events that equal the reference (and thus have empty event maps).
         if (Arrays.equals(realignHap.getBases(), referenceHaplotype.getBases())) {
-            if (debugSite) System.out.println("Events add up to the reference! disallowing pair");
+            Utils.printIf(debug,()->"Events add up to the reference! disallowing pair");
             return true;
         }
         //ALIGN!
@@ -538,50 +465,32 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
         //TODO for the existing ones. Since we are simply realigning and checking the event map outputs its possible that we consider events to
         //TODO be disallowed that have an equal SmithWaterman score to the original but a different (but equivalent) variant representation.
         //TODO This is likely a minor effect on the overall correctness.
-        final boolean wasEquivalentEvent = realignHap.getEventMap().getVariantContexts().stream().filter(eMapVC ->
+        final boolean wasEquivalentEvent = realignHap.getEventMap().getEvents().stream()
                 // Are there any variants NOT in our initial list
-                eventsToTest.stream().noneMatch(v -> {
-                    return doVariantsMatch(eMapVC, v);
-                }))
+                .filter(event -> eventsToTest.stream().noneMatch(event::equals))
                 // Do any of variants (that were not in our set of 2-3 targets) appear in our overall list of alleles
-                .anyMatch(eMapVc -> vcs.stream().anyMatch(v -> {
-                    return doVariantsMatch(eMapVc, v);
-                }));
-        if (debugSite) System.out.println(
-                realignHap.getEventMap().getVariantContexts().stream()
-                .map(PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString((int) referenceHaplotype.getStartPosition()))
-                .collect(Collectors.joining("\n")));
-        if (wasEquivalentEvent) {
-            if (debugSite) System.out.println("Events mismatched!");
-        }
+                .anyMatch(event -> events.stream().anyMatch(event::equals));
+        Utils.printIf(debug, () -> formatEventsLikeDragenLogs(realignHap.getEventMap().getEvents(),  referenceHaplotype.getStart(), "\n"));
+        Utils.printIf(debug && wasEquivalentEvent,()->"Events mismatched!");
 
         return wasEquivalentEvent;
     }
-
-    // A helper method to assert that variant contexts in the event map match those outside of it.
-    private static boolean doVariantsMatch(VariantContext eMapVC, VariantContext v) {
-        return eMapVC.getStart() == v.getStart() &&
-                eMapVC.getReference().equals(v.getReference()) &&
-                eMapVC.getAlternateAllele(0).equals(v.getAlternateAllele(0)) &&
-                eMapVC.getAlternateAlleles().size() == v.getAlternateAlleles().size();
-    }
-
 
     /**
      * NOTE: this accepts multiple alleles stacked up at the same base (assuming the order is SNP -> INDEL)
      * NOTE: However this class does NOT accept multiple SNPS overlapping or SNPs overlapping deletions
      */
     @VisibleForTesting
-    public static Haplotype constructHaplotypeFromVariants(final Haplotype refHap, final List<VariantContext> variantContexts, final boolean setEventMap) {
+    public static Haplotype constructHaplotypeFromVariants(final Haplotype refHap, final List<Event> events, final boolean setEventMap) {
         //ASSERT that the base is ref and cool
         if (!refHap.isReference() || refHap.getCigar().numCigarElements() > 1) {
             throw new GATKException("This is not a valid base haplotype for construction");
         }
         //ASSERT that everything is fully overlapping the reference.
-        variantContexts.stream().forEach(v -> {if (!refHap.getGenomeLocation().contains(v)) throw new GATKException("Provided Variant Context"+v+"doesn't overlap haplotype "+refHap);});
+        events.stream().forEach(v -> {if (!refHap.getGenomeLocation().contains(v)) throw new GATKException("Provided Variant Context"+v+"doesn't overlap haplotype "+refHap);});
 
-        final long genomicStartPosition = refHap.getStartPosition();
-        long refOffsetOfNextBaseToAdd = genomicStartPosition;
+        final int genomicStartPosition = refHap.getStart();
+        int refOffsetOfNextBaseToAdd = genomicStartPosition;
 
         byte[] refbases = refHap.getBases();
         CigarBuilder runningCigar = new CigarBuilder();
@@ -589,54 +498,48 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
 
         //ASSUME sorted for now
         // use the reverse list to save myself figuring out cigars for right now
-        for (VariantContext vc : variantContexts) {
-            if (vc.getAlternateAlleles().size() > 1) {
-                throw new GATKException("too may alt alleles");
-            }
-            Allele refAllele = vc.getReference();
-            Allele altAllele = vc.getAlternateAllele(0);
+        for (Event event : events) {
+            Allele refAllele = event.refAllele();
+            Allele altAllele = event.altAllele();
 
-            int intermediateRefStartPosition = (int) (refOffsetOfNextBaseToAdd - genomicStartPosition);
-            int intermediateRefEndPosition = Math.toIntExact(vc.getStart() - genomicStartPosition);
+            int intermediateRefStartPosition = refOffsetOfNextBaseToAdd - genomicStartPosition;
+            int intermediateRefEndPosition = Math.toIntExact(event.getStart() - genomicStartPosition);
 
-            if ((vc.isIndel() && intermediateRefEndPosition - intermediateRefStartPosition < -1) || (!vc.isIndel() && intermediateRefEndPosition - intermediateRefStartPosition < 0)) {//todo clean this up
-                throw new GATKException("Variant "+vc+" is out of order in the PD event list: "+variantContexts);
+            if ((event.isIndel() && intermediateRefEndPosition - intermediateRefStartPosition < -1) || (!event.isIndel() && intermediateRefEndPosition - intermediateRefStartPosition < 0)) {//todo clean this up
+                throw new GATKException("Variant "+event+" is out of order in the PD event list: "+events);
             }
             if (intermediateRefEndPosition - intermediateRefStartPosition > 0) { // Append the cigar element for the anchor base if necessary.
                 runningCigar.add(new CigarElement(intermediateRefEndPosition - intermediateRefStartPosition, CigarOperator.M));
             }
             // Include the ref base for indel if the base immediately proceeding this event is not already tracked
-            boolean includeRefBaseForIndel = vc.isIndel() && (intermediateRefStartPosition <= intermediateRefEndPosition);
+            boolean includeRefBaseForIndel = event.isIndel() && (intermediateRefStartPosition <= intermediateRefEndPosition);
 
-            CigarElement newCigarElement;
             if (refAllele.length() == altAllele.length()) {
-                newCigarElement = new CigarElement(refAllele.length(), CigarOperator.X);
+                runningCigar.add(new CigarElement(refAllele.length(), CigarOperator.X));
             } else {
                 // If the last base was filled by another event, don't attempt to fill in the indel ref base.
                 if (includeRefBaseForIndel) {
                     runningCigar.add(new CigarElement(1, CigarOperator.M)); //When we add an indel we end up inserting a matching base
                 }
-                newCigarElement = new CigarElement(Math.abs(altAllele.length() - refAllele.length()),
-                        refAllele.length() > altAllele.length() ?
-                                CigarOperator.D : CigarOperator.I);
+                runningCigar.add(new CigarElement(Math.abs(altAllele.length() - refAllele.length()),
+                        refAllele.length() > altAllele.length() ? CigarOperator.D : CigarOperator.I));
             }
-            runningCigar.add(newCigarElement);
 
             if (intermediateRefEndPosition - intermediateRefStartPosition > 0) {
-                newRefBases = ArrayUtils.addAll(newRefBases, ArrayUtils.subarray(refbases, intermediateRefStartPosition, (int) (vc.getStart() - genomicStartPosition))); // bases before the variant
+                newRefBases = ArrayUtils.addAll(newRefBases, ArrayUtils.subarray(refbases, intermediateRefStartPosition, event.getStart() - genomicStartPosition)); // bases before the variant
             }
-            // Handle the ref base for indels that exlcude their ref bases
+            // Handle the ref base for indels that exclude their ref bases
             if (refAllele.length() != altAllele.length() && !includeRefBaseForIndel) {
                 newRefBases = ArrayUtils.addAll(newRefBases, Arrays.copyOfRange(altAllele.getBases(),1, altAllele.length()));
             // else add the snp
             } else {
                 newRefBases = ArrayUtils.addAll(newRefBases, altAllele.getBases()); // refbases added
             }
-            refOffsetOfNextBaseToAdd = vc.getEnd() + 1; //TODO this is probably not set for future reference
+            refOffsetOfNextBaseToAdd = event.getEnd() + 1; //TODO this is probably not set for future reference
         }
 
         // Finish off the haplotype with the final bases
-        int refStartIndex = (int) (refOffsetOfNextBaseToAdd - genomicStartPosition);
+        int refStartIndex = refOffsetOfNextBaseToAdd - genomicStartPosition;
         newRefBases = ArrayUtils.addAll(newRefBases, ArrayUtils.subarray(refbases, refStartIndex, refbases.length));
         runningCigar.add(new CigarElement(refbases.length - refStartIndex, CigarOperator.M));
 
@@ -658,15 +561,15 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
      * NOTE: we assume each provided VC is in start position order, and only ever contains one allele (and that if there are overlapping SNPs and indels that the SNPs come fist)
      */
     @VisibleForTesting
-    //TODO When we implement JointDetection we will need to allow multiple eventWithVariants to be prsent...
-    static PartiallyDeterminedHaplotype createNewPDHaplotypeFromEvents(final Haplotype base, final VariantContext eventWithVariant, final boolean useRef, final List<VariantContext> constituentEvents) {
+    //TODO When we implement JointDetection we will need to allow multiple eventWithVariants to be present...
+    static PartiallyDeterminedHaplotype createNewPDHaplotypeFromEvents(final Haplotype base, final Event eventWithVariant, final boolean useRef, final List<Event> constituentEvents) {
         //ASSERT that the base is ref and cool
         if (!base.isReference() || base.getCigar().numCigarElements() > 1) {
             throw new RuntimeException("This is not a valid base haplotype for construction");
         }
         //TODO add a more stringent check that the format of constituentEvents works
-        long genomicStartPosition = base.getStartPosition();
-        long refOffsetOfNextBaseToAdd = genomicStartPosition;
+        int genomicStartPosition = base.getStart();
+        int refOffsetOfNextBaseToAdd = genomicStartPosition;
 
         byte[] refBasesToAddTo = base.getBases();
         CigarBuilder runningCigar = new CigarBuilder(false); // NOTE: in some incredibly rare edge cases involving the legacy assembly region trimmer a deletion can hang past the edge of an active window.
@@ -675,25 +578,25 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
 
         //ASSUME sorted for now
         // use the reverse list to save myself figuring out cigars for right now
-        for (VariantContext vc : constituentEvents) {
-            int intermediateRefStartPosition = (int) (refOffsetOfNextBaseToAdd - genomicStartPosition);
-            int intermediateRefEndPosition = Math.toIntExact(vc.getStart() - genomicStartPosition);
+        for (Event event : constituentEvents) {
+            int intermediateRefStartPosition = refOffsetOfNextBaseToAdd - genomicStartPosition;
+            int intermediateRefEndPosition = Math.toIntExact(event.getStart() - genomicStartPosition);
 
             // An extra special case if we are a SNP following a SNP
-            if (vc.isSNP() && intermediateRefEndPosition - intermediateRefStartPosition == -1 && ((pdBytes[pdBytes.length-1] & PartiallyDeterminedHaplotype.SNP) != 0)  ) {
-                byte[] array = PartiallyDeterminedHaplotype.getPDBytesForHaplotypes(vc.getReference(), vc.getAlternateAllele(0));
+            if (event.isSNP() && intermediateRefEndPosition - intermediateRefStartPosition == -1 && ((pdBytes[pdBytes.length-1] & PartiallyDeterminedHaplotype.SNP) != 0)  ) {
+                byte[] array = PartiallyDeterminedHaplotype.getPDBytesForHaplotypes(event.refAllele(), event.altAllele());
                 pdBytes[pdBytes.length-1] = (byte) (pdBytes[pdBytes.length-1] | array[0]); // adding any partial bases if necessary
                 continue;
             }
 
             // Ref alleles (even if they overlap undetermined events) should be skipped
-            if (vc.getStart()==eventWithVariant.getStart() && useRef) {
+            if (event.getStart()==eventWithVariant.getStart() && useRef) {
                 continue;
             }
 
             //Check that we are allowed to add this event (and if not we are)
-            if ((vc.isIndel() && intermediateRefEndPosition - intermediateRefStartPosition < -1) || (!vc.isIndel() && intermediateRefEndPosition - intermediateRefStartPosition < 0)) {//todo clean this up
-                throw new RuntimeException("Variant "+vc+" is out of order in the PD event list: "+constituentEvents);
+            if ((event.isIndel() && intermediateRefEndPosition - intermediateRefStartPosition < -1) || (!event.isIndel() && intermediateRefEndPosition - intermediateRefStartPosition < 0)) {//todo clean this up
+                throw new RuntimeException("Variant "+event+" is out of order in the PD event list: "+constituentEvents);
             }
 
             // Add the cigar for bases we skip over
@@ -702,19 +605,16 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
             }
 
             // Include the ref base for indel if the base immediately proceeding this event is not already tracked
-            boolean includeRefBaseForIndel = vc.isIndel() && (intermediateRefStartPosition <= intermediateRefEndPosition);
+            boolean includeRefBaseForIndel = event.isIndel() && (intermediateRefStartPosition <= intermediateRefEndPosition);
 
             // Determine the alleles to add
-            Allele refAllele = vc.getReference();
-            Allele altAllele = vc.getAlternateAllele(0);
+            Allele refAllele = event.refAllele();
+            Allele altAllele = event.altAllele();
             boolean isInsertion = altAllele.length() > refAllele.length(); // If its an insertion we flip to "ADD" the bases to the ref.
             boolean isEvent = false;
             byte[] basesToAdd;
             // If this is the blessed variant, add
-            if (vc.getStart()==eventWithVariant.getStart()) {
-                if (!useRef && eventWithVariant.getAlternateAlleles().size() > 1) {
-                    throw new RuntimeException("the eventWithVariant variant must be monoallelic");
-                }
+            if (event.getStart()==eventWithVariant.getStart()) {
                 isEvent = true;
                 basesToAdd = useRef? refAllele.getBases() : altAllele.getBases();
             // Otherwise make sure we are adding the longest allele (for indels) or the ref allele for snps.
@@ -723,7 +623,7 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
             }
 
             // Remove anchor base if necessary
-            if (vc.isIndel() && !includeRefBaseForIndel) {
+            if (event.isIndel() && !includeRefBaseForIndel) {
                 basesToAdd = Arrays.copyOfRange(basesToAdd, 1, basesToAdd.length);
             }
 
@@ -733,10 +633,10 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
             CigarElement newCigarElement;
             // if this is the event special case
             if (isEvent) {
-                if (vc.isSNP()) {
+                if (event.isSNP()) {
                     newCigarElement = new CigarElement(refAllele.length(), useRef? CigarOperator.M : CigarOperator.X);
                 } else {
-                    if (vc.isIndel() && includeRefBaseForIndel) {
+                    if (event.isIndel() && includeRefBaseForIndel) {
                         runningCigar.add(new CigarElement( 1, CigarOperator.M));
                     }
                     // For Insertions: mark the Cigar as I if we aren't in ref
@@ -749,7 +649,7 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
                 }
            // If we aren't in the blessed variant, add a match and make sure the array is set accordingly
             } else {
-                if (!vc.isIndel()) {
+                if (!event.isIndel()) {
                     newCigarElement = new CigarElement(refAllele.length() , CigarOperator.M);
                 } else {
                     // Maybe add the cigar for the anchor base
@@ -770,8 +670,8 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
 
             // Add ref basses up to this if necessary
             if (intermediateRefEndPosition - intermediateRefStartPosition > 0) {
-                newHaplotypeBasees = ArrayUtils.addAll(newHaplotypeBasees, ArrayUtils.subarray(refBasesToAddTo, intermediateRefStartPosition, (int) (vc.getStart() - genomicStartPosition))); // bases before the variant
-                pdBytes = ArrayUtils.addAll(pdBytes, new byte[vc.getStart() - (int)refOffsetOfNextBaseToAdd]); // bases before the variant
+                newHaplotypeBasees = ArrayUtils.addAll(newHaplotypeBasees, ArrayUtils.subarray(refBasesToAddTo, intermediateRefStartPosition, event.getStart() - genomicStartPosition)); // bases before the variant
+                pdBytes = ArrayUtils.addAll(pdBytes, new byte[event.getStart() - refOffsetOfNextBaseToAdd]); // bases before the variant
             }
             newHaplotypeBasees = ArrayUtils.addAll(newHaplotypeBasees, basesToAdd); // refbases added
             if (includeRefBaseForIndel) {
@@ -784,11 +684,11 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
                             refAllele,
                             isInsertion? refAllele :
                                     altAllele)); // refbases added
-            refOffsetOfNextBaseToAdd = vc.getEnd() + 1; //TODO this is probably not set for future reference
+            refOffsetOfNextBaseToAdd = event.getEnd() + 1; //TODO this is probably not set for future reference
         }
 
         // Finish off the haplotype with the final bases
-        int refStartIndex = (int) (refOffsetOfNextBaseToAdd - genomicStartPosition);
+        int refStartIndex = refOffsetOfNextBaseToAdd - genomicStartPosition;
         newHaplotypeBasees = ArrayUtils.addAll(newHaplotypeBasees, ArrayUtils.subarray(refBasesToAddTo, refStartIndex, refBasesToAddTo.length));
         pdBytes = ArrayUtils.addAll(pdBytes, new byte[refBasesToAddTo.length - refStartIndex]);
         runningCigar.add(new CigarElement(refBasesToAddTo.length - refStartIndex, CigarOperator.M));
@@ -806,23 +706,22 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
 
     // A helper class for managing mutually exclusive event clusters and the logic arround forming valid events vs eachother.
     private static class EventGroup {
-        List<VariantContext> variantsInBitmapOrder;
-        HashSet<VariantContext> variantContextSet;
+        List<Event> eventsInBitmapOrder;
+        HashSet<Event> eventSet;
         //From Illumina (there is a LOT of math that will eventually go into these)/
         BitSet allowedEvents = null;
 
-        // Optimizaiton to save ourselves recomputing the subsets at every point its necessary to do so.
-        List<List<Tuple<VariantContext,Boolean>>> cachedEventLitsts = null;
+        // Optimization to save ourselves recomputing the subsets at every point its necessary to do so.
+        List<List<Tuple<Event,Boolean>>> cachedEventLists = null;
 
-        public EventGroup(final VariantContext variantContext) {
-            variantsInBitmapOrder = new ArrayList<>();
-            variantContextSet = new HashSet<>();
-            variantsInBitmapOrder.add(variantContext);
-            variantContextSet.add(variantContext);
-        }
-        public EventGroup() {
-            variantsInBitmapOrder = new ArrayList<>();
-            variantContextSet = new HashSet<>();
+        public EventGroup(final Event ... events) {
+            eventsInBitmapOrder = new ArrayList<>();
+            eventSet = new HashSet<>();
+
+            for (final Event event : events) {
+                eventsInBitmapOrder.add(event);
+                eventSet.add(event);
+            }
         }
 
         /**
@@ -838,42 +737,42 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
          * Iterate through the mutex variants and ensure pairs containing all mutex variant groups are marked as true
          *
          * @param disallowedEvents Pairs of events disallowed
-         * @return false if the event group is too large to process
          */
-        public boolean populateBitset(List<List<VariantContext>> disallowedEvents) {
-            if (variantsInBitmapOrder.size() > MAX_VAR_IN_EVENT_GROUP) {
-                return false;
-            }
-            if (variantsInBitmapOrder.size() < 2) {
-                return true;
+        public void populateBitset(List<List<Event>> disallowedEvents) {
+            Utils.validate(size() <= MAX_VAR_IN_EVENT_GROUP, () -> "Too many events (" + size() + ") for populating bitset.");
+            if (eventsInBitmapOrder.size() < 2) {
+                return;
             }
 
-            allowedEvents = new BitSet(variantsInBitmapOrder.size());
-            allowedEvents.flip(1, 1 << variantsInBitmapOrder.size());
+            allowedEvents = new BitSet(eventsInBitmapOrder.size());
+            allowedEvents.flip(1, 1 << eventsInBitmapOrder.size());
             // initialize all events as being allowed and then disallow them in turn .
 
             // Ensure the list is in positional order before commencing.
-            variantsInBitmapOrder.sort(HAPLOTYPE_SNP_FIRST_COMPARATOR);
+            eventsInBitmapOrder.sort(HAPLOTYPE_SNP_FIRST_COMPARATOR);
             List<Integer> bitmasks = new ArrayList<>();
-            // Mark as disallowed all events that overlap eachother
-            for (int i = 0; i < variantsInBitmapOrder.size(); i++) {
-                for (int j = i+1; j < variantsInBitmapOrder.size(); j++) {
-                    if (eventsOverlapForPDHapsCode(variantsInBitmapOrder.get(i), variantsInBitmapOrder.get(j), false)) {
+
+            // Mark as disallowed all events that overlap each other, excluding pairs of SNPs
+            for (int i = 0; i < eventsInBitmapOrder.size(); i++) {
+                final Event first = eventsInBitmapOrder.get(i);
+                for (int j = i+1; j < eventsInBitmapOrder.size(); j++) {
+                    final Event second = eventsInBitmapOrder.get(j);
+                    if (!(first.isSNP() && second.isSNP()) && eventsOverlapForPDHapsCode(first, second)) {
                         bitmasks.add(1 << i | 1 << j);
                     }
                 }
             }
             // mark as disallowed any sets of variants from the bitmask.
-            for (List<VariantContext> disallowed : disallowedEvents) {
+            for (List<Event> disallowed : disallowedEvents) {
                 //
-                if (disallowed.stream().anyMatch(v -> variantContextSet.contains(v))){
+                if (disallowed.stream().anyMatch(v -> eventSet.contains(v))){
                     int bitmask = 0;
-                    for (VariantContext v : disallowed) {
-                        int indexOfV = variantsInBitmapOrder.indexOf(v);
+                    for (Event v : disallowed) {
+                        int indexOfV = eventsInBitmapOrder.indexOf(v);
                         if (indexOfV < 0) {
                             throw new RuntimeException("Something went wrong in event group merging, variant "+v+" is missing from the event group despite being in a mutex pair: "+disallowed+"\n"+this);
                         }
-                        bitmask += 1 << variantsInBitmapOrder.indexOf(v);
+                        bitmask += 1 << eventsInBitmapOrder.indexOf(v);
                     }
                     bitmasks.add(bitmask);
                 }
@@ -895,8 +794,6 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
                     }
                 }
             }
-
-            return true;
         }
 
         /**
@@ -905,20 +802,20 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
          * @param disallowSubsets
          * @return
          */
-        public List<List<Tuple<VariantContext,Boolean>>> getVariantGroupsForEvent(final List<Tuple<VariantContext, Boolean>> eventsForMask, final boolean disallowSubsets) {
+        public List<List<Tuple<Event,Boolean>>> getVariantGroupsForEvent(final List<Event> allEventsHere, final int determinedAlleleIndex, final boolean disallowSubsets) {
             // If we are dealing with an external to this list event
             int eventMask = 0;
             int maskValues = 0;
-            for(Tuple<VariantContext, Boolean> event : eventsForMask) {
-                if (variantContextSet.contains(event.a)) {
-                    int index = variantsInBitmapOrder.indexOf(event.a);
+            for(int i = 0; i < allEventsHere.size(); i++) {
+                if (eventSet.contains(allEventsHere.get(i))) {
+                    int index = eventsInBitmapOrder.indexOf(allEventsHere.get(i));
                     eventMask = eventMask | (1 << index);
-                    maskValues = maskValues | ((event.b ? 1 : 0) << index);
+                    maskValues = maskValues | ((i == determinedAlleleIndex ? 1 : 0) << index);
                 }
             }
             // Special case (if we are determining bases outside of this mutex cluster we can reuse the work from previous iterations)
-            if (eventMask == 0 && cachedEventLitsts != null) {
-                return cachedEventLitsts;
+            if (eventMask == 0 && cachedEventLists != null) {
+                return cachedEventLists;
             }
 
             List<Integer> ints = new ArrayList<>();
@@ -942,46 +839,116 @@ public class PartiallyDeterminedHaplotypeComputationEngine {
             }
 
             // Now that we have all the mutex groups, unpack them into lists of variants
-            List<List<Tuple<VariantContext,Boolean>>> output = new ArrayList<>();
+            List<List<Tuple<Event,Boolean>>> output = new ArrayList<>();
             for (Integer grp : ints) {
-                List<Tuple<VariantContext,Boolean>> newGrp = new ArrayList<>();
-                for (int i = 0; i < variantsInBitmapOrder.size(); i++) {
+                List<Tuple<Event,Boolean>> newGrp = new ArrayList<>();
+                for (int i = 0; i < eventsInBitmapOrder.size(); i++) {
                     // if the corresponding bit is 1, set it as such, otherwise set it as 0.
-                    newGrp.add(new Tuple<>(variantsInBitmapOrder.get(i), ((1<<i) & grp) != 0));
+                    newGrp.add(new Tuple<>(eventsInBitmapOrder.get(i), ((1<<i) & grp) != 0));
                 }
                 output.add(newGrp);
             }
             // Cache the result
             if(eventMask==0) {
-                cachedEventLitsts = Collections.unmodifiableList(output);
+                cachedEventLists = Collections.unmodifiableList(output);
             }
             return output;
         }
 
         public boolean causesBranching() {
-            return variantsInBitmapOrder.size() > 1;
+            return eventsInBitmapOrder.size() > 1;
         }
 
         //Print The event group in Illumina indexed ordering:
         public String toDisplayString(int startPos) {
-            return "EventGroup: " + variantsInBitmapOrder.stream().map(vc -> PartiallyDeterminedHaplotype.getDRAGENDebugVariantContextString(startPos).apply(vc)).collect(Collectors.joining("->"));
+            return "EventGroup: " + formatEventsLikeDragenLogs(eventsInBitmapOrder, startPos);
         }
 
-        public boolean contains(final VariantContext event) {
-            return variantContextSet.contains(event);
+        public boolean contains(final Event event) {
+            return eventSet.contains(event);
         }
 
-        public void addEvent(final VariantContext event) {
-            variantsInBitmapOrder.add(event);
-            variantContextSet.add(event);
+        public int size() { return eventsInBitmapOrder.size(); }
+
+        public void addEvent(final Event event) {
+            eventsInBitmapOrder.add(event);
+            eventSet.add(event);
             allowedEvents = null;
         }
 
         public EventGroup mergeEvent(final EventGroup other) {
-            variantsInBitmapOrder.addAll(other.variantsInBitmapOrder);
-            variantContextSet.addAll(other.variantsInBitmapOrder);
+            eventsInBitmapOrder.addAll(other.eventsInBitmapOrder);
+            eventSet.addAll(other.eventsInBitmapOrder);
             allowedEvents = null;
             return this;
         }
     }
+
+    private static List<Event> growEventGroup(final List<Event> group, final Event event) {
+        final List<Event> result = new ArrayList<>(group);
+        result.add(event);
+        return result;
+    }
+
+    // To match DRAGEN we must define a modified start position for indels, which is used to determine overlaps when creating event groups
+    private static double dragenStart(final Event event) {
+        return event.getStart() + (event.isIndel() ? (event.isSimpleDeletion() ? 1 : 0.5) : 0);
+    }
+
+    /**
+     * The remaining methods in this class are for debugging only, trying to produce output logs as similar as possible
+     * to DRAGEN's for the sake of comparison and functional equivalence.
+     */
+
+    private static String formatEventsLikeDragenLogs(final Collection<Event> events, final int refStart) {
+        return formatEventsLikeDragenLogs(events, refStart,"->");
+    }
+
+    private static String formatEventsLikeDragenLogs(final Collection<Event> events, final int refStart, final CharSequence delimiter) {
+        return events.stream()
+                .map(PartiallyDeterminedHaplotype.getDRAGENDebugEventString(refStart))
+                .collect(Collectors.joining(delimiter));
+    }
+
+    private static void eventGroupsMessage(final Haplotype referenceHaplotype, final boolean debug, final Map<Double, List<Event>> eventsByDRAGENCoordinates) {
+        Utils.printIf(debug, () -> eventsByDRAGENCoordinates.entrySet().stream()
+                .map(e -> String.format("%.1f", e.getKey()) + " -> " + formatEventsLikeDragenLogs(e.getValue(),  referenceHaplotype.getStart(),","))
+                .collect(Collectors.joining("\n")));
+    }
+
+    private static void removeBadPileupEventsMessage(final boolean debug, final AssemblyResultSet assemblyResultSet, final Set<Event> badPileupEvents) {
+        if (debug) {
+            final Set<Event> intersection = Sets.intersection(assemblyResultSet.getVariationEvents(0), badPileupEvents);
+            Utils.printIf(debug && !intersection.isEmpty(),
+                    () ->"Removing assembly variant due to columnwise heuristics: " + intersection);
+        }
+    }
+
+    private static void finalEventsListMessage(final int refStart, final boolean debug, final Collection<Event> eventsInOrder) {
+        Utils.printIf(debug, () -> "Variants to PDHapDetermination:\n" + formatEventsLikeDragenLogs(eventsInOrder, refStart));
+    }
+
+    private static void dragenDisallowedGroupsMessage(int refStart, boolean debug, List<List<Event>> disallowedPairs) {
+        Utils.printIf(debug, () -> "disallowed groups:" + disallowedPairs.stream().map(group -> formatEventsLikeDragenLogs(group, refStart)).collect(Collectors.joining("\n")));
+    }
+
+    private static void branchExcludeAllelesMessage(Haplotype referenceHaplotype, boolean debug, Collection<Event> eventsInOrder, List<Set<Event>> branchExcludeAlleles) {
+        if (debug) {
+            System.out.println("Branches:");
+            for (int i = 0; i < branchExcludeAlleles.size(); i++) {
+                final int ifinal = i;
+                System.out.println("Branch "+i+" VCs:");
+                System.out.println("exclude:" + formatEventsLikeDragenLogs(branchExcludeAlleles.get(i), referenceHaplotype.getStart()));
+                //to match dragen debug output for personal sanity
+                final Collection<Event> included = eventsInOrder.stream().filter(variantContext -> !branchExcludeAlleles.get(ifinal).contains(variantContext)).collect(Collectors.toList());
+                System.out.println("include:" + formatEventsLikeDragenLogs(included, referenceHaplotype.getStart()));
+            }
+        }
+    }
+
+    private static void branchHaplotypesDebugMessage(final Haplotype referenceHaplotype, final boolean debug, final Set<Event> excludeEvents, final List<Haplotype> branchHaps) {
+            Utils.printIf(debug, () -> "Constructed Haps for Branch" + formatEventsLikeDragenLogs(excludeEvents,  referenceHaplotype.getStart(), ",") + ":");
+            Utils.printIf(debug, () -> branchHaps.stream().map(h -> h.getCigar() + " " + h.toString()).collect(Collectors.joining("\n")));
+    }
+
 }
