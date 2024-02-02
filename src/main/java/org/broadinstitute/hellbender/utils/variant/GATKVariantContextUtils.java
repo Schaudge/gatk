@@ -1,6 +1,7 @@
 package org.broadinstitute.hellbender.utils.variant;
 
 import com.google.common.annotations.VisibleForTesting;
+import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMSequenceDictionary;
 import htsjdk.samtools.util.Locatable;
 import htsjdk.utils.ValidationUtils;
@@ -629,7 +630,7 @@ public final class GATKVariantContextUtils {
                     }
 
                 } else if (variantType == VariantContext.Type.MNP || variantType == VariantContext.Type.SNP) {
-                    if (doesReadContainAllele(pileupElement, altAllele) == Trilean.TRUE) {
+                    if (pileupElement.getCurrentCigarElement().getOperator() == CigarOperator.M && doesReadContainAllele(pileupElement, altAllele) == Trilean.TRUE) {
                         pileupAllele = altAllele;
                     }
                 }
