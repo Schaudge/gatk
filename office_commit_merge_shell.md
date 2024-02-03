@@ -70,6 +70,14 @@ git branch -d broadinstitute-master
 ```
 
 # 调整 jar 构建版本
+SNAPSHOT build
+```
 git describe
-git tag 4.5.0.1
-git push origin --tags
+git tag 4.5.0.0 -m "YY product"
+git describe
+# git push origin --tags
+```
+or build for current release
+```
+./gradlew localJar -Drelease=true -DversionOverride=4.5.0.0
+```
