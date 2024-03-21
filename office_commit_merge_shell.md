@@ -7,6 +7,10 @@
 ```
 git checkout -b broadinstitute-master master(已存在本地分支名)
 ```
+### 设置 pull 操作自动合并策略 (如配置，可忽略)
+```
+git config pull.rebase false
+```
 ### git pull使用给定的参数运行git fetch，并调用git merge将检索到的分支头(master)合并到当前分支(broadinstitute-master)中. 
 ### 使用--rebase，它运行git rebase而不是git merge.
 ### pull命令使用参考: git pull <远程仓库地址> <远程分支名>:<本地分支名>
@@ -32,6 +36,7 @@ git pull https://github.com/broadinstitute/gatk.git master(:broadinstitute-maste
 #### 自动合并失败，修正冲突然后提交修正的结果。
 
 
+
 ## Step 2: manual correct the expected modification and commit
 ```
 git status
@@ -49,6 +54,7 @@ git status
 git add .
 git commit -m "merge description"
 ```
+
 
 ## Step 3: Merge the changes and update on GitHub.
 ### 切换回 master 分支，并将分支 (broadinstitute-master) 内容合并到 master 分支
