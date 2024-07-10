@@ -53,7 +53,7 @@ public class GnarlyGenotyperIntegrationTest extends CommandLineProgramTest {
     @DataProvider(name="VCFdata")
     public Object[][] getVCFdata() {
         return new Object[][]{
-               /*
+
                 //chrX haploid sample plus diploid sample -- expected results validated with vcf-validator (samtools?)
                 {new File[]{getTestFile("NA12891.chrX.haploid.rb.g.vcf"), getTestFile("NA12892.chrX.diploid.rb.g.vcf")},
                         getTestFile("haploidPlusDiploid.expected.vcf"), null, Arrays.asList(new SimpleInterval("chrX", 1000000, 5000000)), Arrays.asList("--merge-input-intervals", "--only-output-calls-starting-in-intervals"), b38_reference_20_21},
@@ -64,7 +64,7 @@ public class GnarlyGenotyperIntegrationTest extends CommandLineProgramTest {
                 //6 ALT alleles -- yes PLs
                 {new File[]{getTestFile("sample6.vcf"), getTestFile("sample7.vcf"), getTestFile("sample8.vcf")},
                         getTestFile("lotsOfAltsYesPLs.vcf"), null, Arrays.asList(new SimpleInterval("chr20", 257008, 257008)), Arrays.asList("--merge-input-intervals", "--only-output-calls-starting-in-intervals"), b38_reference_20_21},
-        */
+
         // Simple Test, spanning deletions; standard calling confidence
                 //No variants outside requested intervals; no SNPs with QUAL < 60, no INDELs with QUAL < 69?; has star alleles after deletion at chr20:263497; has AC, AF, AN, DP, ExcessHet, FS, MQ, (MQRankSum), (ReadPosRankSum), SOR, QD; has called genotypes
                 {new File[]{getTestFile("sample1.vcf"), getTestFile("sample2.vcf"), getTestFile("sample3.vcf"), getTestFile("sample4.vcf"), getTestFile("sample5.vcf")},
@@ -275,5 +275,31 @@ public class GnarlyGenotyperIntegrationTest extends CommandLineProgramTest {
         Assert.assertFalse(g.hasDP());
         Assert.assertFalse(g.hasAD());
         Assert.assertFalse(g.hasPL());
+    }
+
+    @Test
+    public void gnarlyHomRefNullPLs() {
+        final File output = createTempFile("nullPLs", ".vcf");
+        final File inputNull = new File(toolsTestDir, "walkers/GnarlyGenotyper/NA20890.rb.g.vcf");
+        final File inputVariant = new File(toolsTestDir, "walkers/GnarlyGenotyper/NA20846.rb.g.vcf");
+        final SimpleInterval interval =  new SimpleInterval("chr1", 13273, 13273);
+
+        File tempGdb = GenomicsDBTestUtils.createTempGenomicsDB(Arrays.asList(inputNull, inputVariant), interval);
+        final String genomicsDBUri = GenomicsDBTestUtils.makeGenomicsDBUri(tempGdb);
+
+        final ArgumentsBuilder args = new ArgumentsBuilder();
+        args.addReference(hg38Reference)
+                .addVCF(genomicsDBUri)
+                .addInterval(interval)
+                .addOutput(output);
+        runCommandLine(args);
+
+        final Pair<VCFHeader, List<VariantContext>> outputData = VariantContextTestUtils.readEntireVCFIntoMemory(output.getAbsolutePath());
+        Assert.assertEquals(outputData.getRight().size(), 1);
+        final Genotype nullPlGenotype = outputData.getRight().get(0).getGenotype("NA20890");
+        Assert.assertEquals(nullPlGenotype.getPL(), null);
+        Assert.assertEquals(nullPlGenotype.getAlleles(), Arrays.asList(Allele.create("G", true), Allele.create("G", true)));
+        Assert.assertEquals(nullPlGenotype.getGQ(), 0);
+        Assert.assertEquals(nullPlGenotype.getDP(), 4);
     }
 }

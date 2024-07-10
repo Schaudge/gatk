@@ -57,8 +57,8 @@ repositories {
     mavenLocal()
 }
 
-final htsjdkVersion = System.getProperty('htsjdk.version','4.1.0')
-final picardVersion = System.getProperty('picard.version','3.1.1')
+final htsjdkVersion = System.getProperty('htsjdk.version','4.1.1')
+final picardVersion = System.getProperty('picard.version','3.2.0')
 final barclayVersion = System.getProperty('barclay.version','5.0.0')
 final sparkVersion = System.getProperty('spark.version', '3.5.0')
 final hadoopVersion = System.getProperty('hadoop.version', '3.3.6')
@@ -283,9 +283,9 @@ dependencies {
         }
     }
 
-    implementation 'org.apache.httpcomponents:httpclient:4.5.12'
-    implementation 'commons-beanutils:commons-beanutils:1.9.3'
-    implementation 'commons-io:commons-io:2.5'
+    implementation 'org.apache.httpcomponents:httpclient:4.5.13'
+    implementation 'commons-beanutils:commons-beanutils:1.9.4'
+    implementation 'commons-io:commons-io:2.7'
     implementation 'org.reflections:reflections:0.9.10'
 
     implementation 'it.unimi.dsi:fastutil:7.0.13'
@@ -336,7 +336,7 @@ dependencies {
     implementation 'org.broadinstitute:gatk-bwamem-jni:1.0.4'
     implementation 'org.broadinstitute:gatk-fermilite-jni:1.2.0'
 
-    implementation 'org.broadinstitute:http-nio:1.1.0'
+    implementation 'org.broadinstitute:http-nio:1.1.1'
 
     // Required for COSMIC Funcotator data source:
     implementation 'org.xerial:sqlite-jdbc:3.44.1.0'
@@ -684,7 +684,7 @@ task localDevCondaEnv(type: Exec) {
     dependsOn 'condaEnvironmentDefinition'
     inputs.file("$buildDir/$pythonPackageArchiveName")
     workingDir "$buildDir"
-    commandLine "conda", "env", "create", "--force", "-f", gatkCondaYML
+    commandLine "conda", "env", "create", "--yes", "-f", gatkCondaYML
 }
 
 task javadocJar(type: Jar, dependsOn: javadoc) {
