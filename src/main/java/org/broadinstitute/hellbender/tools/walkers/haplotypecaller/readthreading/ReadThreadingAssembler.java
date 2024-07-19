@@ -41,8 +41,8 @@ public final class ReadThreadingAssembler {
     private static final Logger logger = LogManager.getLogger(ReadThreadingAssembler.class);
 
     static final int DEFAULT_NUM_PATHS_PER_GRAPH = 128;
-    private static final int KMER_SIZE_ITERATION_INCREASE = 10;
-    private static final int MAX_KMER_ITERATIONS_TO_ATTEMPT = 6;
+    private static final int KMER_SIZE_ITERATION_INCREASE = 5;
+    private static final int MAX_KMER_ITERATIONS_TO_ATTEMPT = 12;
 
     /** The min and max kmer sizes to try when building the graph. */
     private final List<Integer> kmerSizes;
@@ -553,14 +553,18 @@ public final class ReadThreadingAssembler {
     List<AssemblyResult> assemble(final List<GATKRead> reads, final Haplotype refHaplotype, final SAMFileHeader header, final SmithWatermanAligner aligner, final SWParameters danglingEndSWParameters) {
         final List<AssemblyResult> results = new LinkedList<>();
 
+        // a more conserved way to add more precise segments to the graph! (Written by Schaudge King!)
+        final int kmerCounts = kmerSizes.size();
+        final List<Integer> basicKmerSizes = kmerSizes.subList(0, kmerCounts > 1 ? 2 : 1);
+
         // first, try using the requested kmer sizes
-        for ( final int kmerSize : kmerSizes ) {
+        for ( final int kmerSize : basicKmerSizes) {
             addResult(results, createGraph(reads, refHaplotype, kmerSize, dontIncreaseKmerSizesForCycles, allowNonUniqueKmersInRef, header, aligner, danglingEndSWParameters));
         }
 
         // if none of those worked, iterate over larger sizes if allowed to do so
         if ( results.isEmpty() && !dontIncreaseKmerSizesForCycles ) {
-            int kmerSize = arrayMaxInt(kmerSizes) + KMER_SIZE_ITERATION_INCREASE;
+            int kmerSize = arrayMaxInt(basicKmerSizes) + KMER_SIZE_ITERATION_INCREASE;
             int numIterations = 1;
             while ( results.isEmpty() && numIterations <= MAX_KMER_ITERATIONS_TO_ATTEMPT ) {
                 // on the last attempt we will allow low complexity graphs
@@ -568,6 +572,12 @@ public final class ReadThreadingAssembler {
                 addResult(results, createGraph(reads, refHaplotype, kmerSize, lastAttempt, lastAttempt, header, aligner, danglingEndSWParameters));
                 kmerSize += KMER_SIZE_ITERATION_INCREASE;
                 numIterations++;
+            }
+        }
+
+        if (kmerCounts > 2) {
+            for ( final int kmerSize : kmerSizes.subList(2, kmerCounts) ) {
+                addResult(results, createGraph(reads, refHaplotype, kmerSize, dontIncreaseKmerSizesForCycles, allowNonUniqueKmersInRef, header, aligner, danglingEndSWParameters));
             }
         }
 

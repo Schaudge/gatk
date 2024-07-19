@@ -46,6 +46,7 @@ public final class ReferenceConfidenceVariantContextMerger {
             GATKVCFConstants.ORIGINAL_CONTIG_MISMATCH_KEY,
             GATKVCFConstants.HAPLOTYPE_CALLER_PHASING_GT_KEY,
             GATKVCFConstants.HAPLOTYPE_CALLER_PHASING_ID_KEY,
+            GATKVCFConstants.HAPLOTYPE_MIN_WEIGHT,
             VCFConstants.PHASE_SET_KEY);
     private static final List<String> SOMATIC_INFO_ANNOTATIONS_TO_DROP = Arrays.asList(
             GATKVCFConstants.POPULATION_AF_KEY);

@@ -7,6 +7,7 @@ import htsjdk.variant.variantcontext.*;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.lang3.tuple.Triple;
 import org.broadinstitute.hellbender.GATKBaseTest;
 import org.broadinstitute.gatk.nativebindings.smithwaterman.SWParameters;
 import org.broadinstitute.hellbender.engine.AssemblyRegion;
@@ -692,7 +693,7 @@ public class AssemblyBasedCallerUtilsUnitTest extends GATKBaseTest {
 
     @Test(dataProvider="ConstructPhaseGroupsProvider")
     public void testConstructPhaseGroups(final List<VariantContext> calls,
-                                         final Map<VariantContext, Pair<Integer, PhaseGroup>> phaseMap,
+                                         final Map<VariantContext, Triple<Integer, Integer, PhaseGroup>> phaseMap,
                                          final int endIndex,
                                          final int expectedNumGroups,
                                          final int expectedGroupSize,
@@ -992,14 +993,14 @@ public class AssemblyBasedCallerUtilsUnitTest extends GATKBaseTest {
                                              final int expectedNum01,
                                              final int expectedNum10) {
         Assert.assertEquals(totalHaplotypes, getTotalHaplotypes(haplotypeMap));
-        final Map<VariantContext, Pair<Integer, PhaseGroup>> actualPhaseSetMapping =
+        final Map<VariantContext, Triple<Integer, Integer, PhaseGroup>> actualPhaseSetMapping =
                 constructPhaseSetMapping(calls, haplotypeMap);
-        final int actualNumGroups = Math.toIntExact(actualPhaseSetMapping.values().stream().map(Pair::getLeft).distinct().count());
+        final int actualNumGroups = Math.toIntExact(actualPhaseSetMapping.values().stream().map(Triple::getLeft).distinct().count());
         Assert.assertEquals(actualNumGroups, expectedNumGroups);
         Assert.assertEquals(actualPhaseSetMapping.size(), expectedMapSize);
 
         int num01 = 0, num10 = 0;
-        for ( final Pair<Integer, PhaseGroup> phase : actualPhaseSetMapping.values() ) {
+        for ( final Triple<Integer, Integer, PhaseGroup> phase : actualPhaseSetMapping.values() ) {
             if ( phase.getRight().equals(PhaseGroup.PHASE_01) )
                 num01++;
             else if ( phase.getRight().equals(PhaseGroup.PHASE_10) )

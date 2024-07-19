@@ -31,6 +31,7 @@ public class Haplotype extends SimpleAllele implements Locatable{
     private EventMap eventMap = null;
     private Cigar cigar;
     private int alignmentStartHapwrtRef; //NOTE: this is the offset to a supposed array of reference bases held in memory and has nothing to do with start positions
+    private int weakness = Integer.MAX_VALUE;
     private double score = Double.NaN;
 
     /**
@@ -153,6 +154,7 @@ public class Haplotype extends SimpleAllele implements Locatable{
         final Haplotype ret = new Haplotype(newBases, ignoreRefState ? false : isReference());
         ret.setCigar(leadingIndelTrimmedNewCigar);
         ret.setGenomeLocation(loc);
+        ret.setWeakness(weakness);
         ret.setScore(score);
         ret.setKmerSize(kmerSize);
         ret.setAlignmentStartHapwrtRef(newStart + getAlignmentStartHapwrtRef());
@@ -291,6 +293,24 @@ public class Haplotype extends SimpleAllele implements Locatable{
         return new Haplotype(newHaplotypeBases);
     }
 
+    /**
+     * Get the weakest edge weight (the minimum reads count to support this haplotype) of this haplotype
+     * @return an integer, where higher values are better
+     */
+    public int getWeakness() {
+        return weakness;
+    }
+
+    /**
+     * Set the weakness (the minimum reads count to support this haplotype) of this haplotype.
+     *
+     * Note that if this is the reference haplotype it is always given INT.MAX_VALUE score
+     *
+     * @param weakness an integer, where higher values are better
+     */
+    public void setWeakness(final int weakness) {
+        this.weakness = weakness;
+    }
 
     /**
      * Get the score (an estimate of the support) of this haplotype

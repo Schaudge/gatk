@@ -1,8 +1,8 @@
 package org.broadinstitute.hellbender.tools.walkers.haplotypecaller;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Sets;
 import htsjdk.samtools.Cigar;
-import htsjdk.samtools.CigarOperator;
 import htsjdk.samtools.SAMFileHeader;
 import htsjdk.samtools.SAMFileWriter;
 import htsjdk.samtools.SAMReadGroupRecord;
@@ -12,6 +12,7 @@ import htsjdk.variant.variantcontext.*;
 import htsjdk.variant.vcf.VCFConstants;
 import org.apache.commons.lang3.mutable.MutableInt;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.lang3.tuple.Triple;
 import org.apache.logging.log4j.Logger;
 import org.broadinstitute.gatk.nativebindings.smithwaterman.SWParameters;
 import org.broadinstitute.hellbender.engine.AlignmentContext;
@@ -42,6 +43,7 @@ import org.broadinstitute.hellbender.utils.read.*;
 import org.broadinstitute.hellbender.utils.smithwaterman.SmithWatermanAligner;
 import org.broadinstitute.hellbender.utils.variant.GATKVCFConstants;
 import org.broadinstitute.hellbender.utils.variant.GATKVariantContextUtils;
+import org.broadinstitute.hellbender.utils.variant.VariantContextGetters;
 
 import java.io.File;
 import java.util.*;
@@ -732,9 +734,9 @@ public final class AssemblyBasedCallerUtils {
         final Map<VariantContext, Set<Haplotype>> haplotypeMap = constructHaplotypeMapping(calls, calledHaplotypes);
 
         // construct a mapping from call to phase set ID
-        final Map<VariantContext, Pair<Integer, PhaseGroup>> phaseSetMapping =
+        final Map<VariantContext, Triple<Integer, Integer, PhaseGroup>> phaseSetMapping =
                 constructPhaseSetMapping(calls, haplotypeMap);
-        final int uniqueCounterEndValue = Math.toIntExact(phaseSetMapping.values().stream().map(Pair::getLeft).distinct().count());
+        final int uniqueCounterEndValue = Math.toIntExact(phaseSetMapping.values().stream().map(Triple::getLeft).distinct().count());
 
         // we want to establish (potential) *groups* of phased variants, so we need to be smart when looking at pairwise phasing partners
         return constructPhaseGroups(calls, phaseSetMapping, uniqueCounterEndValue);
@@ -780,6 +782,13 @@ public final class AssemblyBasedCallerUtils {
     }
 
     /**
+     * If exists, returns the first allele fraction for the first sample (tumor) from within the current variant context.
+     */
+    private static double getFirstAlleleFraction(final VariantContext call) {
+        return VariantContextGetters.getAttributeAsDoubleArray(call.getGenotype(0), GATKVCFConstants.ALLELE_FRACTION_KEY, () -> null, 0.0)[0];
+    }
+
+    /**
      * Construct the mapping from call (variant context) to phase set ID
      *
      * @param originalCalls    the original unphased calls
@@ -788,7 +797,7 @@ public final class AssemblyBasedCallerUtils {
      *  note this may be empty in impossible-to-phase situations
      */
     @VisibleForTesting
-    static Map<VariantContext, Pair<Integer, PhaseGroup>> constructPhaseSetMapping(final List<VariantContext> originalCalls,
+    static Map<VariantContext, Triple<Integer, Integer, PhaseGroup>> constructPhaseSetMapping(final List<VariantContext> originalCalls,
                                                                                    final Map<VariantContext, Set<Haplotype>> haplotypeMap) {
 
         // count the total number of alternate haplotypes
@@ -796,7 +805,7 @@ public final class AssemblyBasedCallerUtils {
         haplotypeMap.values().forEach(haplotypesWithCalledVariants::addAll);
         final int totalAvailableHaplotypes = haplotypesWithCalledVariants.size();
 
-        final Map<VariantContext, Pair<Integer, PhaseGroup>> phaseSetMapping = new HashMap<>(haplotypeMap.size());
+        final Map<VariantContext, Triple<Integer, Integer, PhaseGroup>> phaseSetMapping = new HashMap<>(haplotypeMap.size());
 
         final int numCalls = originalCalls.size();
         int uniqueCounter = 0;
@@ -804,9 +813,9 @@ public final class AssemblyBasedCallerUtils {
         // use the haplotype mapping to connect variants that are always/never present on the same haplotypes
         for ( int i = 0; i < numCalls - 1; i++ ) {
             final VariantContext call = originalCalls.get(i);
-            final double callFraction = ((double []) call.getGenotype(0).getExtendedAttribute("AF"))[0];
+            final double callFraction = getFirstAlleleFraction(call);
             final Set<Haplotype> haplotypesWithCall = haplotypeMap.get(call);
-            if ( haplotypesWithCall.isEmpty() || callFraction < 0.0079) {
+            if ( haplotypesWithCall.isEmpty() || callFraction < 0.0057) {
                 continue;
             }
 
@@ -823,7 +832,7 @@ public final class AssemblyBasedCallerUtils {
 
             for ( int j = i+1; j < numCalls; j++ ) {
                 final VariantContext comp = originalCalls.get(j);
-                final double compFraction = ((double[]) comp.getGenotype(0).getExtendedAttribute("AF"))[0];
+                final double compFraction = getFirstAlleleFraction(comp);
                 final Set<Haplotype> haplotypesWithComp = haplotypeMap.get(comp);
                 if ( haplotypesWithComp.isEmpty() ) {
                     continue;
@@ -832,13 +841,15 @@ public final class AssemblyBasedCallerUtils {
                 // if the variants are together on all alt haplotypes, record that fact. NB that this does not mean that the
                 // genotype for the variant is homozygous since this method does not consider the ref haplotype
                 final boolean compIsOnAllAltHaps = haplotypesWithComp.size() == totalAvailableHaplotypes;
+                final Sets.SetView<Haplotype> intersectionHaplotype = Sets.intersection(haplotypesWithCall, haplotypesWithComp);
+                final OptionalInt maxPhaseConfidenceReads = intersectionHaplotype.stream().mapToInt(Haplotype::getWeakness).max();
+                final int phaseReadsCount = maxPhaseConfidenceReads.isPresent() ? maxPhaseConfidenceReads.getAsInt() : 0;
 
                 // For some high frequency complex long indels, that many reads not coverage the whole indels completely,
                 // and variants will dispatch to different haplotypes, so we relax the conditions for phase set combination!
                 // TODO: more optimal condition to be considered!
                 if ( (haplotypesWithCall.size() == haplotypesWithComp.size() && haplotypesWithCall.containsAll(haplotypesWithComp))
-                        || (callFraction > 0.03 && compFraction > 0.03 && compFraction - callFraction < 0.05 && callFraction - compFraction < 0.05 &&
-                        (haplotypesWithCall.containsAll(haplotypesWithComp) || haplotypesWithComp.containsAll(haplotypesWithCall)))
+                        || (numCalls < 4 && phaseReadsCount > 5 && callFraction > 0.01 && compFraction > 0.01 && compFraction * 6 > callFraction && callFraction * 6 > compFraction)
                         || (callIsOnAllAltHaps && callHaplotypesAvailableForPhasing.containsAll(haplotypesWithComp))
                         || compIsOnAllAltHaps ) {
 
@@ -858,8 +869,8 @@ public final class AssemblyBasedCallerUtils {
                         // sample will actually be homozygous downstream: there are steps in the pipeline that are liable
                         // to change the genotypes.  Because we can't make those assumptions here, we have decided to output
                         // the phase as if the call is heterozygous and then "fix" it downstream as needed.
-                        phaseSetMapping.put(call, Pair.of(uniqueCounter, PhaseGroup.PHASE_01));
-                        phaseSetMapping.put(comp, Pair.of(uniqueCounter, PhaseGroup.PHASE_01));
+                        phaseSetMapping.put(call, Triple.of(uniqueCounter, phaseReadsCount, PhaseGroup.PHASE_01));
+                        phaseSetMapping.put(comp, Triple.of(uniqueCounter, phaseReadsCount, PhaseGroup.PHASE_01));
 
                         // if the call was on all alternate haps but the comp isn't, we need to narrow down the set of
                         // alt haps we'll consider for further phasing other variants with the call
@@ -869,17 +880,13 @@ public final class AssemblyBasedCallerUtils {
                     }
                     // otherwise it's part of an existing group so use that group's unique ID
                     else if ( ! phaseSetMapping.containsKey(comp) ) {
-                        final Pair<Integer, PhaseGroup> callPhase = phaseSetMapping.get(call);
-                        phaseSetMapping.put(comp, Pair.of(callPhase.getLeft(), callPhase.getRight()));
+                        final Triple<Integer, Integer, PhaseGroup> callPhase = phaseSetMapping.get(call);
+                        phaseSetMapping.put(comp, Triple.of(callPhase.getLeft(), phaseReadsCount, callPhase.getRight()));
                     }
                 }
                 // if the variants are apart on *all* alternate haplotypes, record that fact
                 else if ( haplotypesWithCall.size() + haplotypesWithComp.size() == totalAvailableHaplotypes ) {
-
-                    final Set<Haplotype> intersection = new HashSet<>();
-                    intersection.addAll(haplotypesWithCall);
-                    intersection.retainAll(haplotypesWithComp);
-                    if ( intersection.isEmpty() ) {
+                    if ( intersectionHaplotype.isEmpty() ) {
                         // create a new group if these are the first entries
                         if ( ! phaseSetMapping.containsKey(call) ) {
                             // note that if the comp is already in the map then that is very bad because it means that there is
@@ -890,14 +897,14 @@ public final class AssemblyBasedCallerUtils {
                                 return phaseSetMapping;
                             }
 
-                            phaseSetMapping.put(call, Pair.of(uniqueCounter, PhaseGroup.PHASE_01));
-                            phaseSetMapping.put(comp, Pair.of(uniqueCounter, PhaseGroup.PHASE_10));
+                            phaseSetMapping.put(call, Triple.of(uniqueCounter, phaseReadsCount, PhaseGroup.PHASE_01));
+                            phaseSetMapping.put(comp, Triple.of(uniqueCounter, phaseReadsCount, PhaseGroup.PHASE_10));
                             uniqueCounter++;
                         }
                         // otherwise it's part of an existing group so use that group's unique ID
                         else if ( ! phaseSetMapping.containsKey(comp) ){
-                            final Pair<Integer, PhaseGroup> callPhase = phaseSetMapping.get(call);
-                            phaseSetMapping.put(comp, Pair.of(callPhase.getLeft(), callPhase.getRight().equals(PhaseGroup.PHASE_01) ? PhaseGroup.PHASE_10 : PhaseGroup.PHASE_01));
+                            final Triple<Integer, Integer, PhaseGroup> callPhase = phaseSetMapping.get(call);
+                            phaseSetMapping.put(comp, Triple.of(callPhase.getLeft(), phaseReadsCount, callPhase.getRight().equals(PhaseGroup.PHASE_01) ? PhaseGroup.PHASE_10 : PhaseGroup.PHASE_01));
                         }
                     }
                 }
@@ -917,7 +924,7 @@ public final class AssemblyBasedCallerUtils {
      */
     @VisibleForTesting
     static List<VariantContext> constructPhaseGroups(final List<VariantContext> originalCalls,
-                                                               final Map<VariantContext, Pair<Integer, PhaseGroup>> phaseSetMapping,
+                                                               final Map<VariantContext, Triple<Integer, Integer, PhaseGroup>> phaseSetMapping,
                                                                final int indexTo) {
         final List<VariantContext> phasedCalls = new ArrayList<>(originalCalls);
 
@@ -944,7 +951,8 @@ public final class AssemblyBasedCallerUtils {
             // update the VCs
             for ( final int index : indexes ) {
                 final VariantContext originalCall = originalCalls.get(index);
-                final VariantContext phasedCall = phaseVC(originalCall, uniqueID, phaseSetMapping.get(originalCall).getRight(), phaseSetID);
+                final Triple<Integer, Integer, PhaseGroup> phaseInfo = phaseSetMapping.get(originalCall);
+                final VariantContext phasedCall = phaseVC(originalCall, uniqueID, phaseInfo.getRight(), phaseInfo.getMiddle(), phaseSetID);
                 phasedCalls.set(index, phasedCall);
             }
         }
@@ -986,9 +994,10 @@ public final class AssemblyBasedCallerUtils {
      * @param vc   the variant context
      * @param ID   the ID to use
      * @param phaseGT the phase GT string to use
+     * @param phaseHW Haplotype Weakness (weight) to support this phase
      * @return phased non-null variant context
      */
-    private static VariantContext phaseVC(final VariantContext vc, final String ID, final PhaseGroup phaseGT, final int phaseSetID) {
+    private static VariantContext phaseVC(final VariantContext vc, final String ID, final PhaseGroup phaseGT, final int phaseHW, final int phaseSetID) {
         final List<Genotype> phasedGenotypes = new ArrayList<>();
         for ( final Genotype g : vc.getGenotypes() ) {
             final List<Allele> alleles = g.getAlleles();
@@ -1002,6 +1011,7 @@ public final class AssemblyBasedCallerUtils {
                 .phased(true)
                 .attribute(GATKVCFConstants.HAPLOTYPE_CALLER_PHASING_ID_KEY, ID)
                 .attribute(GATKVCFConstants.HAPLOTYPE_CALLER_PHASING_GT_KEY, phaseGT.getDescription())
+                .attribute(GATKVCFConstants.HAPLOTYPE_MIN_WEIGHT, phaseHW)
                 .attribute(VCFConstants.PHASE_SET_KEY, phaseSetID)
                 .make();
             phasedGenotypes.add(genotype);
