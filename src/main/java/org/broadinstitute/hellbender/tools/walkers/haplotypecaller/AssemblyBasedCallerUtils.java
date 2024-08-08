@@ -18,7 +18,6 @@ import org.broadinstitute.gatk.nativebindings.smithwaterman.SWParameters;
 import org.broadinstitute.hellbender.engine.AlignmentContext;
 import org.broadinstitute.hellbender.engine.AssemblyRegion;
 import org.broadinstitute.hellbender.exceptions.UserException;
-import org.broadinstitute.hellbender.tools.FlowBasedArgumentCollection;
 import org.broadinstitute.hellbender.tools.walkers.haplotypecaller.readthreading.ReadThreadingAssembler;
 import org.broadinstitute.hellbender.utils.IndexRange;
 import org.broadinstitute.hellbender.utils.QualityUtils;
@@ -43,7 +42,6 @@ import org.broadinstitute.hellbender.utils.read.*;
 import org.broadinstitute.hellbender.utils.smithwaterman.SmithWatermanAligner;
 import org.broadinstitute.hellbender.utils.variant.GATKVCFConstants;
 import org.broadinstitute.hellbender.utils.variant.GATKVariantContextUtils;
-import org.broadinstitute.hellbender.utils.variant.VariantContextGetters;
 
 import java.io.File;
 import java.util.*;
@@ -265,22 +263,21 @@ public final class AssemblyBasedCallerUtils {
         //AlleleLikelihoods::normalizeLikelihoods uses Double.NEGATIVE_INFINITY as a flag to disable capping
         final double log10GlobalReadMismappingRate = getGlobalMismatchingRateFromArgs(likelihoodArgs);
 
-        switch ( implementation) {
+        return switch (implementation) {
             // TODO these constructors should eventually be matched so they both incorporate all the same ancilliary arguments
-            case PairHMM:
-                return new PairHMMLikelihoodCalculationEngine((byte) likelihoodArgs.gcpHMM, likelihoodArgs.dontUseDragstrPairHMMScores ? null : DragstrParamUtils.parse(likelihoodArgs.dragstrParams),
-                likelihoodArgs.pairHMMNativeArgs.getPairHMMArgs(), likelihoodArgs.pairHMM, likelihoodArgs.pairHmmResultsFile, log10GlobalReadMismappingRate, likelihoodArgs.pcrErrorModel,
-                likelihoodArgs.BASE_QUALITY_SCORE_THRESHOLD, likelihoodArgs.enableDynamicReadDisqualification, likelihoodArgs.readDisqualificationThresholdConstant,
-                likelihoodArgs.expectedErrorRatePerBase, !likelihoodArgs.disableSymmetricallyNormalizeAllelesToReference, likelihoodArgs.disableCapReadQualitiesToMapQ, handleSoftclips);
-            case FlowBased:
-                return new FlowBasedAlignmentLikelihoodEngine(fbargs, log10GlobalReadMismappingRate, likelihoodArgs.expectedErrorRatePerBase, likelihoodArgs.enableDynamicReadDisqualification, likelihoodArgs.readDisqualificationThresholdConstant);
-            case FlowBasedHMM:
-                return new FlowBasedHMMEngine(fbargs, (byte) likelihoodArgs.gcpHMM, log10GlobalReadMismappingRate, likelihoodArgs.expectedErrorRatePerBase, likelihoodArgs.pcrErrorModel,
-                        likelihoodArgs.dontUseDragstrPairHMMScores ? null : DragstrParamUtils.parse(likelihoodArgs.dragstrParams), likelihoodArgs.enableDynamicReadDisqualification, likelihoodArgs.readDisqualificationThresholdConstant,
-                        likelihoodArgs.minUsableIndelScoreToUse, (byte) likelihoodArgs.flatDeletionPenalty, (byte) likelihoodArgs.flatInsertionPenatly);
-            default:
-                throw new UserException("Unsupported likelihood calculation engine.");
-        }
+            case PairHMM ->
+                    new PairHMMLikelihoodCalculationEngine((byte) likelihoodArgs.gcpHMM, likelihoodArgs.dontUseDragstrPairHMMScores ? null : DragstrParamUtils.parse(likelihoodArgs.dragstrParams),
+                            likelihoodArgs.pairHMMNativeArgs.getPairHMMArgs(), likelihoodArgs.pairHMM, likelihoodArgs.pairHmmResultsFile, log10GlobalReadMismappingRate, likelihoodArgs.pcrErrorModel,
+                            likelihoodArgs.BASE_QUALITY_SCORE_THRESHOLD, likelihoodArgs.enableDynamicReadDisqualification, likelihoodArgs.readDisqualificationThresholdConstant,
+                            likelihoodArgs.expectedErrorRatePerBase, !likelihoodArgs.disableSymmetricallyNormalizeAllelesToReference, likelihoodArgs.disableCapReadQualitiesToMapQ, handleSoftclips);
+            case FlowBased ->
+                    new FlowBasedAlignmentLikelihoodEngine(fbargs, log10GlobalReadMismappingRate, likelihoodArgs.expectedErrorRatePerBase, likelihoodArgs.enableDynamicReadDisqualification, likelihoodArgs.readDisqualificationThresholdConstant);
+            case FlowBasedHMM ->
+                    new FlowBasedHMMEngine(fbargs, (byte) likelihoodArgs.gcpHMM, log10GlobalReadMismappingRate, likelihoodArgs.expectedErrorRatePerBase, likelihoodArgs.pcrErrorModel,
+                            likelihoodArgs.dontUseDragstrPairHMMScores ? null : DragstrParamUtils.parse(likelihoodArgs.dragstrParams), likelihoodArgs.enableDynamicReadDisqualification, likelihoodArgs.readDisqualificationThresholdConstant,
+                            likelihoodArgs.minUsableIndelScoreToUse, (byte) likelihoodArgs.flatDeletionPenalty, (byte) likelihoodArgs.flatInsertionPenatly);
+            default -> throw new UserException("Unsupported likelihood calculation engine.");
+        };
     }
 
     /**
@@ -335,7 +332,6 @@ public final class AssemblyBasedCallerUtils {
                                                   final ReadThreadingAssembler assemblyEngine,
                                                   final SmithWatermanAligner aligner,
                                                   final boolean correctOverlappingBaseQualities,
-                                                  final FlowBasedArgumentCollection fbargs,
                                                   final boolean bypassAssembly){
         finalizeRegion(region,
                 argumentCollection.assemblerArgs.errorCorrectReads,
@@ -477,7 +473,7 @@ public final class AssemblyBasedCallerUtils {
         final long minimumPassingScore = scores.values().stream()
                 .sorted(Comparator.reverseOrder())
                 .skip(numPileupHaplotypes - 1)
-                .findFirst().get();
+                .findFirst().orElseThrow();
 
         // If there are ties, we pass any haplotype with a score as good as the numPileupHaplotypes-th best, with
         // final ordering determined by string representation (for determinism).
@@ -549,7 +545,7 @@ public final class AssemblyBasedCallerUtils {
         final Map<Allele, List<Allele>> alleleSubset = vc.getAlleles().stream().collect(Collectors.toMap(a -> a, Arrays::asList));
         final AlleleLikelihoods<U, Allele> subsettedLikelihoods = likelihoodsAllele.marginalize(alleleSubset);
         final Collection<AlleleLikelihoods<U, Allele>.BestAllele> bestAlleles = subsettedLikelihoods.bestAllelesBreakingTies().stream()
-                .filter(ba -> ba.isInformative()).collect(Collectors.toList());
+                .filter(AlleleLikelihoods.BestAllele::isInformative).toList();
         for (AlleleLikelihoods<U, Allele>.BestAllele bestAllele : bestAlleles) {
             final Allele allele = bestAllele.allele;
             for (final GATKRead read : readCollectionFunc.apply(bestAllele.evidence)) {
@@ -645,7 +641,7 @@ public final class AssemblyBasedCallerUtils {
      * @param loc The active locus being genotyped
      * @param haplotypes Haplotypes for the current active region
      * @param emitSpanningDels If true will map spanning events to a * allele instead of reference // TODO add a test for this behavior
-     * @return
+     * @return Map<Allele, List<Haplotype>> A mapping table of Allele to Haplotype List
      */
     public static Map<Allele, List<Haplotype>> createAlleleMapper(final VariantContext mergedVC, final int loc, final List<Haplotype> haplotypes, final boolean emitSpanningDels) {
 
@@ -782,10 +778,10 @@ public final class AssemblyBasedCallerUtils {
     }
 
     /**
-     * If exists, returns the first allele fraction for the first sample (tumor) from within the current variant context.
+     * If exists, returns the first alternate allele depth from the first (tumor) sample within the current variant context.
      */
-    private static double getFirstAlleleFraction(final VariantContext call) {
-        return VariantContextGetters.getAttributeAsDoubleArray(call.getGenotype(0), GATKVCFConstants.ALLELE_FRACTION_KEY, () -> null, 0.0)[0];
+    private static int getAltDepth(final VariantContext call) {
+        return call.getGenotype(0).getAD()[1];
     }
 
     /**
@@ -813,9 +809,9 @@ public final class AssemblyBasedCallerUtils {
         // use the haplotype mapping to connect variants that are always/never present on the same haplotypes
         for ( int i = 0; i < numCalls - 1; i++ ) {
             final VariantContext call = originalCalls.get(i);
-            final double callFraction = getFirstAlleleFraction(call);
+            final int callDepth = getAltDepth(call);
             final Set<Haplotype> haplotypesWithCall = haplotypeMap.get(call);
-            if ( haplotypesWithCall.isEmpty() || callFraction < 0.0057) {
+            if (haplotypesWithCall.isEmpty() || callDepth < 3) {
                 continue;
             }
 
@@ -832,9 +828,9 @@ public final class AssemblyBasedCallerUtils {
 
             for ( int j = i+1; j < numCalls; j++ ) {
                 final VariantContext comp = originalCalls.get(j);
-                final double compFraction = getFirstAlleleFraction(comp);
+                final int compDepth = getAltDepth(comp);
                 final Set<Haplotype> haplotypesWithComp = haplotypeMap.get(comp);
-                if ( haplotypesWithComp.isEmpty() ) {
+                if ( haplotypesWithComp.isEmpty() || compDepth < 2) {
                     continue;
                 }
 
@@ -849,7 +845,8 @@ public final class AssemblyBasedCallerUtils {
                 // and variants will dispatch to different haplotypes, so we relax the conditions for phase set combination!
                 // TODO: more optimal condition to be considered!
                 if ( (haplotypesWithCall.size() == haplotypesWithComp.size() && haplotypesWithCall.containsAll(haplotypesWithComp))
-                        || (numCalls < 4 && phaseReadsCount > 5 && callFraction > 0.01 && compFraction > 0.01 && compFraction * 6 > callFraction && callFraction * 6 > compFraction)
+                        || (phaseReadsCount > 3 && phaseReadsCount * 5 > callDepth && phaseReadsCount * 5 > compDepth)
+                        || (phaseReadsCount > 11 && phaseReadsCount * 9 > callDepth && phaseReadsCount * 9 > compDepth)
                         || (callIsOnAllAltHaps && callHaplotypesAvailableForPhasing.containsAll(haplotypesWithComp))
                         || compIsOnAllAltHaps ) {
 
