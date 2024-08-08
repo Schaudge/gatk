@@ -295,7 +295,7 @@ public class RampedHaplotypeCallerEngine extends HaplotypeCallerEngine {
 
                 RampUtils.logReads(rpArgs.rampsDebugReads, "onramp: BEFORE untrimmedAssemblyResult reads", context.region.getReads());
                 final AssemblyResultSet untrimmedAssemblyResult = AssemblyBasedCallerUtils.assembleReads(context.region, hcArgs, readsHeader, samplesList, logger, referenceReader, assemblyEngine, aligner,
-                        !hcArgs.doNotCorrectOverlappingBaseQualities, hcArgs.fbargs, postFilterOnRamp != null);
+                        !hcArgs.doNotCorrectOverlappingBaseQualities, postFilterOnRamp != null);
                 RampUtils.logReads(rpArgs.rampsDebugReads, "onramp: AFTER untrimmedAssemblyResult reads", context.region.getReads());
                 context.assemblyResult.setRegionForGenotyping(untrimmedAssemblyResult.getRegionForGenotyping());
 
@@ -326,7 +326,7 @@ public class RampedHaplotypeCallerEngine extends HaplotypeCallerEngine {
             RampUtils.logReads(rpArgs.rampsDebugReads, "BEFORE untrimmedAssemblyResult reads", context.region.getReads());
             List<VariantContext> forcedPileupAlleles = Collections.emptyList(); // TODO: we currently do not support pileup alleles in RampedHaplotypeCaller, this should be added
             final AssemblyResultSet untrimmedAssemblyResult = AssemblyBasedCallerUtils.assembleReads(context.region, hcArgs, readsHeader, samplesList, logger, referenceReader, assemblyEngine, aligner,
-                    !hcArgs.doNotCorrectOverlappingBaseQualities, hcArgs.fbargs, postFilterOnRamp != null);
+                    !hcArgs.doNotCorrectOverlappingBaseQualities, postFilterOnRamp != null);
             RampUtils.logReads(rpArgs.rampsDebugReads, "AFTER untrimmedAssemblyResult reads", context.region.getReads());
             if (postFilterOnRamp != null) {
                 if (!postFilterOnRamp.hasRegion(context.region.getSpan())) {
