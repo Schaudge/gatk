@@ -31,7 +31,7 @@ public class Haplotype extends SimpleAllele implements Locatable{
     private EventMap eventMap = null;
     private Cigar cigar;
     private int alignmentStartHapwrtRef; //NOTE: this is the offset to a supposed array of reference bases held in memory and has nothing to do with start positions
-    private int weakness = Integer.MAX_VALUE;
+    private int weakness = Integer.MIN_VALUE;
     private double score = Double.NaN;
 
     /**

@@ -751,10 +751,10 @@ public final class AssemblyBasedCallerUtils {
         final Map<VariantContext, Set<Haplotype>> haplotypeMap = new HashMap<>(originalCalls.size());
         for ( final VariantContext call : originalCalls ) {
             // don't try to phase if there is not exactly 1 alternate allele
-            if ( ! isBiallelicWithOneSiteSpecificAlternateAllele(call) ) {
-                haplotypeMap.put(call, Collections.emptySet());
-                continue;
-            }
+            // if ( ! isBiallelicWithOneSiteSpecificAlternateAllele(call) ) {
+            //     haplotypeMap.put(call, Collections.emptySet());
+            //    continue;
+            // }
 
             // keep track of the haplotypes that contain this particular alternate allele
             final Allele alt = getSiteSpecificAlternateAllele(call);
@@ -771,7 +771,7 @@ public final class AssemblyBasedCallerUtils {
 
     /**
      * If at least one exists, returns a concrete (not NONREF) site-specific (starting at the current POS) alternate allele
-     * from within the current variant context.
+     * from within the current variant context. (Assume that alleles sorted by depth)
      */
     private static Allele getSiteSpecificAlternateAllele(final VariantContext call) {
         return call.getAlternateAlleles().stream().filter(AssemblyBasedCallerUtils::isSiteSpecificAltAllele).findFirst().orElse(null);
@@ -826,11 +826,11 @@ public final class AssemblyBasedCallerUtils {
             // downstream. This set keeps track of what call haplotypes are available for phasing downstream for "callIsOnAllAltHaps" variants.
             final Set<Haplotype> callHaplotypesAvailableForPhasing = new HashSet<>(haplotypesWithCall);
 
-            for ( int j = i+1; j < numCalls; j++ ) {
+            for ( int j = i + 1; j < numCalls; ++j) {
                 final VariantContext comp = originalCalls.get(j);
                 final int compDepth = getAltDepth(comp);
                 final Set<Haplotype> haplotypesWithComp = haplotypeMap.get(comp);
-                if ( haplotypesWithComp.isEmpty() || compDepth < 2) {
+                if (comp.getStart() > call.getEnd() + 13 || haplotypesWithComp.isEmpty() || compDepth < 2) {
                     continue;
                 }
 
