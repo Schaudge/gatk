@@ -153,8 +153,11 @@ public class SomaticGenotypingEngine implements AutoCloseable {
 
 
             final Set<Allele> forcedAlleles = AssemblyBasedCallerUtils.allelesConsistentWithGivenAlleles(givenAlleles, mergedVC);
-            final List<Allele> tumorAltAlleles = mergedVC.getAlternateAlleles().stream()
-                    .filter(allele -> forcedAlleles.contains(allele) || tumorLogOdds.getAlt(allele) > MTAC.getEmissionLogOdds())
+            double maxAlternativeLogOdd = mergedVC.getAlternateAlleles().stream().mapToDouble(tumorLogOdds::get).max().orElse(0);
+            final List<Allele> tumorAltAlleles = mergedVC.getAlternateAlleles().size() > 1 ? mergedVC.getAlternateAlleles().stream()
+                    .filter(allele -> tumorLogOdds.getAlt(allele) > MTAC.getEmissionLogOdds() || (forcedAlleles.contains(allele) && tumorLogOdds.getAlt(allele) * 11 > maxAlternativeLogOdd))
+                    .collect(Collectors.toList()) : mergedVC.getAlternateAlleles().stream()
+                    .filter(allele -> tumorLogOdds.getAlt(allele) > MTAC.getEmissionLogOdds() || forcedAlleles.contains(allele))
                     .collect(Collectors.toList());
 
             final List<Allele> allelesToGenotype = tumorAltAlleles.stream()
