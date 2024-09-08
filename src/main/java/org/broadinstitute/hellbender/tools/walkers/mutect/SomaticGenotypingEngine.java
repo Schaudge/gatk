@@ -2,7 +2,6 @@ package org.broadinstitute.hellbender.tools.walkers.mutect;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.primitives.Doubles;
 import htsjdk.samtools.SAMFileHeader;
 import htsjdk.samtools.SAMSequenceDictionary;
 import htsjdk.samtools.util.Locatable;
@@ -34,6 +33,7 @@ import org.broadinstitute.hellbender.utils.variant.GATKVCFConstants;
 import org.broadinstitute.hellbender.utils.variant.GATKVariantContextUtils;
 
 import java.util.*;
+import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -102,12 +102,12 @@ public class SomaticGenotypingEngine implements AutoCloseable {
 
         final List<Integer> eventStarts = EventMap.getEventStartPositions(haplotypes).stream()
                 .filter(loc -> activeRegionWindow.getStart() <= loc && loc <= activeRegionWindow.getEnd())
-                .collect(Collectors.toList());
+                .toList();
 
         final Set<Haplotype> calledHaplotypes = new HashSet<>();
         final List<VariantContext> returnCalls = new ArrayList<>();
 
-        if(withBamOut){
+        if (withBamOut) {
             //add annotations to reads for alignment regions and calling regions
             AssemblyBasedCallerUtils.annotateReadLikelihoodsWithRegions(logReadLikelihoods, activeRegionWindow);
         }
@@ -118,7 +118,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
         final AlleleLikelihoods<Fragment, Haplotype> logFragmentLikelihoods = logReadLikelihoods.groupEvidence(MTAC.independentMates ? read -> read : GATKRead::getName, Fragment::createAndAvoidFailure);
 
         final Set<Event> potentialSomaticEventsInRegion = new HashSet<>();
-        for( final int loc : eventStarts ) {
+        for (final int loc : eventStarts ) {
             final List<VariantContext> eventsAtThisLoc = AssemblyBasedCallerUtils.getVariantsFromActiveHaplotypes(loc, haplotypes, false);
             VariantContext merged = AssemblyBasedCallerUtils.makeMergedVariantContext(eventsAtThisLoc);
             if( merged == null ) {
@@ -153,12 +153,13 @@ public class SomaticGenotypingEngine implements AutoCloseable {
 
 
             final Set<Allele> forcedAlleles = AssemblyBasedCallerUtils.allelesConsistentWithGivenAlleles(givenAlleles, mergedVC);
-            double maxAlternativeLogOdd = mergedVC.getAlternateAlleles().stream().mapToDouble(tumorLogOdds::get).max().orElse(0);
-            final List<Allele> tumorAltAlleles = mergedVC.getAlternateAlleles().size() > 1 ? mergedVC.getAlternateAlleles().stream()
-                    .filter(allele -> tumorLogOdds.getAlt(allele) > MTAC.getEmissionLogOdds() || (forcedAlleles.contains(allele) && tumorLogOdds.getAlt(allele) * 11 > maxAlternativeLogOdd))
-                    .collect(Collectors.toList()) : mergedVC.getAlternateAlleles().stream()
-                    .filter(allele -> tumorLogOdds.getAlt(allele) > MTAC.getEmissionLogOdds() || forcedAlleles.contains(allele))
-                    .collect(Collectors.toList());
+            final List<Allele> allAltAlleles = mergedVC.getAlternateAlleles();
+            final double maxAlternativeLogOdd = allAltAlleles.stream().mapToDouble(tumorLogOdds::get).max().orElse(0.0001);
+            Function<Allele, Boolean> alleleFilters = (allele) -> forcedAlleles.contains(allele) || tumorLogOdds.getAlt(allele) > MTAC.getEmissionLogOdds();
+            if (allAltAlleles.size() > 1)
+                alleleFilters = (allele) -> (forcedAlleles.contains(allele) && tumorLogOdds.getAlt(allele) * 11 > maxAlternativeLogOdd)
+                        || tumorLogOdds.getAlt(allele) > MTAC.getEmissionLogOdds();
+            final List<Allele> tumorAltAlleles = allAltAlleles.stream().filter(alleleFilters::apply).toList();
 
             final List<Allele> allelesToGenotype = tumorAltAlleles.stream()
                     .filter(allele -> forcedAlleles.contains(allele) || !hasNormal || MTAC.genotypeGermlineSites || normalLogOdds.getAlt(allele) > MathUtils.log10ToLog(MTAC.normalLog10Odds))
@@ -166,7 +167,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
 
             // record somatic alleles for later use in the Event Count annotation
             // note that in tumor-only calling it does not attempt to detect germline events
-            mergedVC.getAlternateAlleles().stream()
+            allAltAlleles.stream()
                     .filter(allele -> tumorLogOdds.getAlt(allele) > MTAC.getEmissionLogOdds())
                     .filter(allele -> !hasNormal || normalLogOdds.getAlt(allele) > MathUtils.log10ToLog(MTAC.normalLog10Odds))
                     .map(allele -> new Event(mergedVC.getContig(), mergedVC.getStart(), mergedVC.getReference(), allele))
@@ -220,10 +221,9 @@ public class SomaticGenotypingEngine implements AutoCloseable {
 
             final AlleleLikelihoods<GATKRead, Allele> trimmedLikelihoodsForAnnotation = logReadAlleleLikelihoods.marginalize(trimmedToUntrimmedAlleleMap);
 
-
             final VariantContext annotatedCall =  annotationEngine.annotateContext(trimmedCall, featureContext, referenceContext,
                     trimmedLikelihoodsForAnnotation, Optional.of(trimmedLikelihoods), Optional.of(logFragmentLikelihoods), Optional.empty(), a -> true);
-            if(withBamOut) {
+            if (withBamOut) {
                 AssemblyBasedCallerUtils.annotateReadLikelihoodsWithSupportedAlleles(trimmedCall, trimmedLikelihoods, Fragment::getReads);
             }
 
@@ -237,7 +237,6 @@ public class SomaticGenotypingEngine implements AutoCloseable {
         }
 
         final List<VariantContext> outputCalls = AssemblyBasedCallerUtils.phaseCalls(returnCalls, calledHaplotypes);
-        final int eventCount = outputCalls.size();
 
         // calculate the number of somatic events in the best haplotype of each called variant
         final Map<Haplotype, MutableInt> haplotypeSupportCounts = logReadLikelihoods.alleles().stream()
@@ -245,7 +244,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
         logReadLikelihoods.bestAllelesBreakingTies()
                 .forEach(bestHaplotype -> haplotypeSupportCounts.get(bestHaplotype.allele).increment());
 
-        final Map<Event, List<Haplotype>> haplotypesByEvent= new HashMap<>();
+        final Map<Event, List<Haplotype>> haplotypesByEvent = new HashMap<>();
         for (final Haplotype haplotype : logReadLikelihoods.alleles()) {
             for (final Event event : haplotype.getEventMap().getEvents()) {
                 haplotypesByEvent.computeIfAbsent(event, e -> new ArrayList<>()).add(haplotype);

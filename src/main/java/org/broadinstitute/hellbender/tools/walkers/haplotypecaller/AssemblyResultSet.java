@@ -744,9 +744,9 @@ public final class AssemblyResultSet {
 
         // choose the highest-scoring haplotypes along with the reference for building force-calling haplotypes
         final List<Haplotype> baseHaplotypes = getHaplotypeList().stream()
-                .sorted(Comparator.comparing(Haplotype::isReference).thenComparingDouble(hap -> hap.getScore()).reversed())
+                .sorted(Comparator.comparing(Haplotype::isReference).thenComparingDouble(Haplotype::getScore).reversed())
                 .limit(AssemblyBasedCallerUtils.NUM_HAPLOTYPES_TO_INJECT_FORCE_CALLING_ALLELES_INTO)
-                .collect(Collectors.toList());
+                .toList();
 
         for (final Event given : givenAlleles) {
             final List<Event> assembledEvents = assembledEventsByStart.getOrDefault(given.getStart(), Collections.emptyList());

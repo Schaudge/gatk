@@ -278,8 +278,8 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
         final Set<Event> goodPileupEvents = goodAndBadPileupEvents.getLeft();
         final Set<Event> badPileupEvents = goodAndBadPileupEvents.getRight();
 
-        goodPileupEvents.forEach(allVariationEvents::add);
-        givenAlleles.forEach(allVariationEvents::add);
+        allVariationEvents.addAll(goodPileupEvents);
+        allVariationEvents.addAll(givenAlleles);
 
         final AssemblyRegionTrimmer.Result trimmingResult = trimmer.trim(originalAssemblyRegion, allVariationEvents, referenceContext);
         if (!trimmingResult.isVariationPresent()) {

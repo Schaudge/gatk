@@ -838,8 +838,7 @@ public final class AssemblyBasedCallerUtils {
                 // genotype for the variant is homozygous since this method does not consider the ref haplotype
                 final boolean compIsOnAllAltHaps = haplotypesWithComp.size() == totalAvailableHaplotypes;
                 final Sets.SetView<Haplotype> intersectionHaplotype = Sets.intersection(haplotypesWithCall, haplotypesWithComp);
-                final OptionalInt maxPhaseConfidenceReads = intersectionHaplotype.stream().mapToInt(Haplotype::getWeakness).max();
-                final int phaseReadsCount = maxPhaseConfidenceReads.isPresent() ? maxPhaseConfidenceReads.getAsInt() : 0;
+                final int phaseReadsCount = intersectionHaplotype.stream().mapToInt(Haplotype::getWeakness).max().orElse(0);
 
                 // For some high frequency complex long indels, that many reads not coverage the whole indels completely,
                 // and variants will dispatch to different haplotypes, so we relax the conditions for phase set combination!
