@@ -57,6 +57,8 @@ public final class AssemblyBasedCallerUtils {
     public static final int REFERENCE_PADDING_FOR_ASSEMBLY = 500;
     public static final int DETERMINE_COLLAPSE_THRESHOLD = -1;
     public static final int NUM_HAPLOTYPES_TO_INJECT_FORCE_CALLING_ALLELES_INTO = 5;
+    public static final int MIN_ALT_ALLELE_DEPTH_FOR_PHASE = 3;
+    public static final int MAX_CALL_DISTANCE_FOR_PHASE = 13;
     public static final String SUPPORTED_ALLELES_TAG="XA";
     public static final String CALLABLE_REGION_TAG = "CR";
     public static final String ALIGNMENT_REGION_TAG = "AR";
@@ -811,7 +813,7 @@ public final class AssemblyBasedCallerUtils {
             final VariantContext call = originalCalls.get(i);
             final int callDepth = getAltDepth(call);
             final Set<Haplotype> haplotypesWithCall = haplotypeMap.get(call);
-            if (haplotypesWithCall.isEmpty() || callDepth < 3) {
+            if (haplotypesWithCall.isEmpty() || callDepth < MIN_ALT_ALLELE_DEPTH_FOR_PHASE) {
                 continue;
             }
 
@@ -830,7 +832,7 @@ public final class AssemblyBasedCallerUtils {
                 final VariantContext comp = originalCalls.get(j);
                 final int compDepth = getAltDepth(comp);
                 final Set<Haplotype> haplotypesWithComp = haplotypeMap.get(comp);
-                if (comp.getStart() > call.getEnd() + 13 || haplotypesWithComp.isEmpty() || compDepth < 2) {
+                if (comp.getStart() > call.getEnd() + MAX_CALL_DISTANCE_FOR_PHASE || haplotypesWithComp.isEmpty() || compDepth < MIN_ALT_ALLELE_DEPTH_FOR_PHASE) {
                     continue;
                 }
 
@@ -839,13 +841,13 @@ public final class AssemblyBasedCallerUtils {
                 final boolean compIsOnAllAltHaps = haplotypesWithComp.size() == totalAvailableHaplotypes;
                 final Sets.SetView<Haplotype> intersectionHaplotype = Sets.intersection(haplotypesWithCall, haplotypesWithComp);
                 final int phaseReadsCount = intersectionHaplotype.stream().mapToInt(Haplotype::getWeakness).max().orElse(0);
+                final double phaseDiffusionRate = Math.pow(1.1 * Math.log10(Math.max(callDepth, compDepth)), 2) + 5;
 
                 // For some high frequency complex long indels, that many reads not coverage the whole indels completely,
                 // and variants will dispatch to different haplotypes, so we relax the conditions for phase set combination!
                 // TODO: more optimal condition to be considered!
                 if ( (haplotypesWithCall.size() == haplotypesWithComp.size() && haplotypesWithCall.containsAll(haplotypesWithComp))
-                        || (phaseReadsCount > 3 && phaseReadsCount * 5 > callDepth && phaseReadsCount * 5 > compDepth)
-                        || (phaseReadsCount > 11 && phaseReadsCount * 9 > callDepth && phaseReadsCount * 9 > compDepth)
+                        || (phaseReadsCount > 2 && (phaseReadsCount * phaseDiffusionRate > callDepth || phaseReadsCount * phaseDiffusionRate > compDepth))
                         || (callIsOnAllAltHaps && callHaplotypesAvailableForPhasing.containsAll(haplotypesWithComp))
                         || compIsOnAllAltHaps ) {
 
@@ -926,7 +928,7 @@ public final class AssemblyBasedCallerUtils {
 
         // if we managed to find any phased groups, update the VariantContexts
         for ( int count = 0; count < indexTo; count++ ) {
-            // get all of the (indexes of the) calls that belong in this group (keeping them in the original order)
+            // get all of these (indexes of the) calls that belong in this group (keeping them in the original order)
             final List<Integer> indexes = new ArrayList<>();
             for ( int index = 0; index < originalCalls.size(); index++ ) {
                 final VariantContext call = originalCalls.get(index);
