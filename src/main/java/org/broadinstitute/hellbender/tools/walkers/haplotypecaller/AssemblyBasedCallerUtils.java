@@ -841,7 +841,7 @@ public final class AssemblyBasedCallerUtils {
                 final boolean compIsOnAllAltHaps = haplotypesWithComp.size() == totalAvailableHaplotypes;
                 final Sets.SetView<Haplotype> intersectionHaplotype = Sets.intersection(haplotypesWithCall, haplotypesWithComp);
                 final int phaseReadsCount = intersectionHaplotype.stream().mapToInt(Haplotype::getWeakness).max().orElse(0);
-                final double phaseDiffusionRate = Math.pow(1.1 * Math.log10(Math.min(callDepth, compDepth)), 2) + 5;
+                final double phaseDiffusionRate = 2 * Math.log10(Math.min(callDepth, compDepth)) + 1;
 
                 // For some high frequency complex long indels, that many reads not coverage the whole indels completely,
                 // and variants will dispatch to different haplotypes, so we relax the conditions for phase set combination!
