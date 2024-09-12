@@ -402,7 +402,7 @@ public class RampedHaplotypeCallerEngine extends HaplotypeCallerEngine {
 
         // abort early if something is out of the acceptable range
         // TODO is this ever true at this point??? perhaps GGA. Need to check.
-        if (!context.assemblyResult.isVariationPresent() && !hcArgs.disableOptimizations) {
+        if (context.assemblyResult.isVariationAbsent() && !hcArgs.disableOptimizations) {
             context.regionVariants = referenceModelForNoVariation(context.region, false, context.VCpriors);
             return;
         }

@@ -864,7 +864,7 @@ public class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
 
         // abort early if something is out of the acceptable range
         // TODO is this ever true at this point??? perhaps GGA. Need to check.
-        if (!assemblyResult.isVariationPresent() && !hcArgs.disableOptimizations) {
+        if (assemblyResult.isVariationAbsent() && !hcArgs.disableOptimizations) {
             return referenceModelForNoVariation(region, false, VCpriors);
         }
 

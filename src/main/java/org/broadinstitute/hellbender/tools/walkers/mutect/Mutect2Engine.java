@@ -94,8 +94,7 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
     public static final int MIN_TAIL_QUALITY = 9;
 
     final private M2ArgumentCollection MTAC;
-    private SAMFileHeader header;
-    private SAMSequenceDictionary sequenceDictionary;
+    private final SAMFileHeader header;
     private final int minCallableDepth;
     public static final String CALLABLE_SITES_NAME = "callable";
 
@@ -108,14 +107,14 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
 
     private final boolean forceCallingAllelesPresent;
 
-    private CachingIndexedFastaSequenceFile referenceReader;
-    private ReadThreadingAssembler assemblyEngine;
-    private ReadLikelihoodCalculationEngine likelihoodCalculationEngine;
-    private SomaticGenotypingEngine genotypingEngine;
-    private Optional<HaplotypeBAMWriter> haplotypeBAMWriter;
-    private Optional<VariantContextWriter> assembledEventMapVcfOutputWriter;
-    private Optional<PriorityQueue<VariantContext>> assembledEventMapVariants;
-    private VariantAnnotatorEngine annotationEngine;
+    private final CachingIndexedFastaSequenceFile referenceReader;
+    private final ReadThreadingAssembler assemblyEngine;
+    private final ReadLikelihoodCalculationEngine likelihoodCalculationEngine;
+    private final SomaticGenotypingEngine genotypingEngine;
+    private final Optional<HaplotypeBAMWriter> haplotypeBAMWriter;
+    private final Optional<VariantContextWriter> assembledEventMapVcfOutputWriter;
+    private final Optional<PriorityQueue<VariantContext>> assembledEventMapVariants;
+    private final VariantAnnotatorEngine annotationEngine;
     private final SmithWatermanAligner aligner;
     private final AssemblyRegionTrimmer trimmer;
     private SomaticReferenceConfidenceModel referenceConfidenceModel = null;
@@ -143,7 +142,6 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
                          final SAMSequenceDictionary sequenceDictionary, final GATKPath referenceSpec, final VariantAnnotatorEngine annotatorEngine) {
         this.MTAC = Utils.nonNull(MTAC);
         this.header = Utils.nonNull(header);
-        this.sequenceDictionary = sequenceDictionary;
         minCallableDepth = MTAC.callableDepth;
         referenceReader = ReferenceUtils.createReferenceReader(Utils.nonNull(referenceSpec));
         aligner = SmithWatermanAligner.getAligner(MTAC.smithWatermanImplementation);
@@ -292,7 +290,7 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
         assemblyResult.injectPileupEvents(originalAssemblyRegion, MTAC, aligner, goodPileupEvents);
 
         // we might find out after assembly that the "active" region actually has no variants
-        if( ! assemblyResult.isVariationPresent() ) {
+        if( assemblyResult.isVariationAbsent() ) {
             return emitReferenceConfidence() ? referenceModelForNoVariation(originalAssemblyRegion) : NO_CALLS;
         }
 
@@ -443,7 +441,7 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
     }
 
     public void writeExtraOutputs(final File statsTable) {
-        final List<MutectStats> stats = Arrays.asList(new MutectStats(CALLABLE_SITES_NAME, callableSites.getValue()));
+        final List<MutectStats> stats = List.of(new MutectStats(CALLABLE_SITES_NAME, callableSites.getValue()));
         MutectStats.writeToFile(stats, statsTable);
         f1R2CountsCollector.ifPresent(collector -> {
             collector.writeHistograms();

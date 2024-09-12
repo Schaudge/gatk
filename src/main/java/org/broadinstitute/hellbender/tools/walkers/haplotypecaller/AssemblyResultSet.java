@@ -12,7 +12,6 @@ import org.apache.logging.log4j.Logger;
 import org.broadinstitute.gatk.nativebindings.smithwaterman.SWOverhangStrategy;
 import org.broadinstitute.gatk.nativebindings.smithwaterman.SWParameters;
 import org.broadinstitute.hellbender.engine.AssemblyRegion;
-import org.broadinstitute.hellbender.tools.walkers.ReferenceConfidenceVariantContextMerger;
 import org.broadinstitute.hellbender.tools.walkers.haplotypecaller.readthreading.AbstractReadThreadingGraph;
 import org.broadinstitute.hellbender.utils.SimpleInterval;
 import org.broadinstitute.hellbender.utils.Utils;
@@ -47,7 +46,7 @@ public final class AssemblyResultSet {
     public static final Comparator<Event> HAPLOTYPE_EVENT_COMPARATOR = Comparator.comparingInt(Event::getStart)
             // Decide arbitrarily so as not to accidentally throw away overlapping variants
             .thenComparingInt(e -> e.refAllele().length())
-            .thenComparing(e -> e.altAllele());
+            .thenComparing(Event::altAllele);
     private final Map<Integer,AssemblyResult> assemblyResultByKmerSize;
     private final Set<Haplotype> haplotypes;
     private Set<Haplotype> originalAssemblyHaps = new LinkedHashSet<>();
@@ -135,7 +134,7 @@ public final class AssemblyResultSet {
         final List<Haplotype> trimmedHaplotypes = new ArrayList<>(originalByTrimmedHaplotypes.keySet());
 
         // resort the trimmed haplotypes.
-        Collections.sort(trimmedHaplotypes, Haplotype.SIZE_AND_BASE_ORDER);
+        trimmedHaplotypes.sort(Haplotype.SIZE_AND_BASE_ORDER);
         final Map<Haplotype, Haplotype> sortedOriginalByTrimmedHaplotypes = mapOriginalToTrimmed(originalByTrimmedHaplotypes, trimmedHaplotypes);
 
         if ( debug ) {
@@ -216,13 +215,13 @@ public final class AssemblyResultSet {
      * Checks whether there is any variation present in the assembly result set.
      *
      * <p>
-     *     This is equivalent to whether there is more than one haplotype.
+     *     This is equivalent to whether there is zero haplotype.
      * </p>
      *
-     * @return {@code true} if there is variation present, {@code false} otherwise.
+     * @return {@code true} if there is variation absent, {@code false} otherwise.
      */
-    public boolean isVariationPresent() {
-        return variationPresent && haplotypes.size() > 1;
+    public boolean isVariationAbsent() {
+        return !variationPresent || haplotypes.isEmpty();
     }
 
     /**
@@ -533,8 +532,9 @@ public final class AssemblyResultSet {
      * Returns a sorted set of variant events that best explain the haplotypes found by the assembly
      * across kmerSizes.
      *
-     * <p/>
+     * <p>
      * The result is sorted incrementally by location.
+     * </p>
      * @param maxMnpDistance Phased substitutions separated by this distance or less are merged into MNPs.  More than
      *                       two substitutions occuring in the same alignment block (ie the same M/X/EQ CIGAR element)
      *                       are merged until a substitution is separated from the previous one by a greater distance.
@@ -665,8 +665,10 @@ public final class AssemblyResultSet {
     /**
      * Helper method that handles the actual "GGA-like" Merging of haplotype alleles into an assembly result set.
      *
+     * <p>
      * First this method will filter out haplotypes that contain alleles that have failed the pileup calling filtering steps,
      * Then the list will attempt to poke into the haplotype list artificial haplotypes that have the found alleles present.
+     * </p>
      */
     @SuppressWarnings({"deprecation"})
     public void injectPileupEvents(final AssemblyRegion region, final AssemblyBasedCallerArgumentCollection argumentCollection,
@@ -685,8 +687,7 @@ public final class AssemblyResultSet {
         final Collection<Event> assembledIndels = getVariationEvents(argumentCollection.maxMnpDistance).stream().
                 filter(Event::isIndel).toList();
 
-        Set<Haplotype> baseHaplotypes = new TreeSet<>();
-        baseHaplotypes.addAll(getHaplotypeList().stream()
+        Set<Haplotype> baseHaplotypes = new TreeSet<>(getHaplotypeList().stream()
                 .sorted(Comparator.comparingInt((Haplotype hap) -> hap.isReference() ? 1 : 0).thenComparingDouble(Haplotype::getScore).reversed())
                 .limit(AssemblyBasedCallerUtils.NUM_HAPLOTYPES_TO_INJECT_FORCE_CALLING_ALLELES_INTO)
                 .toList());
