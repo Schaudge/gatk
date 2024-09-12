@@ -648,10 +648,11 @@ public class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
     /**
      * Given a pileup, returns an ActivityProfileState containing the probability (0.0 to 1.0) that it's an "active" site.
      *
+     * <p>
      * Note that the current implementation will always return either 1.0 or 0.0, as it relies on the smoothing in
      * {@link org.broadinstitute.hellbender.utils.activityprofile.BandPassActivityProfile} to create the full distribution
      * of probabilities. This is consistent with GATK 3.
-     *
+     *</p>
      * @param context reads pileup to examine
      * @param ref reference base overlapping the pileup locus
      * @param features features overlapping the pileup locus
@@ -743,7 +744,7 @@ public class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
 
         final List<VariantContext> VCpriors = new ArrayList<>();
         if (hcArgs.standardArgs.genotypeArgs.supportVariants != null) {
-            features.getValues(hcArgs.standardArgs.genotypeArgs.supportVariants).stream().forEach(VCpriors::add);
+            VCpriors.addAll(features.getValues(hcArgs.standardArgs.genotypeArgs.supportVariants));
         }
 
         if ( hcArgs.sampleNameToUse != null ) {
@@ -784,7 +785,7 @@ public class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
         if (assemblyDebugOutStream != null) {
             try {
                 assemblyDebugOutStream.write("\nThere were " + untrimmedAssemblyResult.getHaplotypeList().size() + " haplotypes found. Here they are:\n");
-                for (final String haplotype : untrimmedAssemblyResult.getHaplotypeList().stream().map(Haplotype::toString).sorted().collect(Collectors.toList())) {
+                for (final String haplotype : untrimmedAssemblyResult.getHaplotypeList().stream().map(Haplotype::toString).sorted().toList()) {
                     assemblyDebugOutStream.write(haplotype);
                     assemblyDebugOutStream.append('\n');
                 }
@@ -1110,7 +1111,7 @@ public class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
         if (pdhmmLikelihoodCalculationEngine != null) pdhmmLikelihoodCalculationEngine.close();
         aligner.close();
         haplotypeBAMWriter.ifPresent(HaplotypeBAMWriter::close);
-        assembledEventMapVcfOutputWriter.ifPresent(writer -> {assembledEventMapVariants.get().forEach(event -> writer.add(event)); writer.close();});
+        assembledEventMapVcfOutputWriter.ifPresent(writer -> {assembledEventMapVariants.get().forEach(writer::add); writer.close();});
         if ( referenceReader != null) {
             try {
                 referenceReader.close();

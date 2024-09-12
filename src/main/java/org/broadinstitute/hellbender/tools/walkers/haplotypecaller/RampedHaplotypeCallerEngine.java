@@ -53,12 +53,12 @@ public class RampedHaplotypeCallerEngine extends HaplotypeCallerEngine {
     // haplotype caller phases, as consumers
     final private List<Consumer<CallRegionContext>>   phases =
             Arrays.asList(
-                    p -> prepare(p),
-                    p -> assemble(p),
-                    p -> computeReadLikelihoods(p),
-                    p -> uncollapse(p),
-                    p -> filter(p),
-                    p -> genotype(p)
+                    this::prepare,
+                    this::assemble,
+                    this::computeReadLikelihoods,
+                    this::uncollapse,
+                    this::filter,
+                    this::genotype
             );
 
     public RampedHaplotypeCallerEngine(final HaplotypeCallerArgumentCollection hcArgs, AssemblyRegionArgumentCollection assemblyRegionArgs, boolean createBamOutIndex,
@@ -91,8 +91,6 @@ public class RampedHaplotypeCallerEngine extends HaplotypeCallerEngine {
 
                 // create ramp
                 switch ( rpArgs.offRampType ) {
-                    case NONE:
-                        break;
                     case PRE_FILTER_OFF:
                         preFilterOffRamp = new PreFilterOffRamp(rpArgs.offRampFile);
                         break;
@@ -111,8 +109,6 @@ public class RampedHaplotypeCallerEngine extends HaplotypeCallerEngine {
 
                 // create ramp
                 switch ( rpArgs.onRampType ) {
-                    case NONE:
-                        break;
                     case POST_FILTER_ON:
                         if ( rpArgs.offRampType == RampedHaplotypeCallerArgumentCollection.OffRampTypeEnum.PRE_FILTER_OFF ) {
                             throw new IllegalArgumentException("an on ramp, if present, must be before the off ramp");
@@ -145,7 +141,7 @@ public class RampedHaplotypeCallerEngine extends HaplotypeCallerEngine {
             throw new RuntimeException(e);
         }
     }
-    private class CallRegionContext {
+    private static class CallRegionContext {
 
         // params
         final AssemblyRegion region;
@@ -232,7 +228,7 @@ public class RampedHaplotypeCallerEngine extends HaplotypeCallerEngine {
 
         context.VCpriors = new ArrayList<>();
         if (hcArgs.standardArgs.genotypeArgs.supportVariants != null) {
-            context.features.getValues(hcArgs.standardArgs.genotypeArgs.supportVariants).stream().forEach(context.VCpriors::add);
+            context.VCpriors.addAll(context.features.getValues(hcArgs.standardArgs.genotypeArgs.supportVariants));
         }
 
         if (hcArgs.sampleNameToUse != null) {
@@ -324,7 +320,8 @@ public class RampedHaplotypeCallerEngine extends HaplotypeCallerEngine {
 
             // run the local assembler, getting back a collection of information on how we should proceed
             RampUtils.logReads(rpArgs.rampsDebugReads, "BEFORE untrimmedAssemblyResult reads", context.region.getReads());
-            List<VariantContext> forcedPileupAlleles = Collections.emptyList(); // TODO: we currently do not support pileup alleles in RampedHaplotypeCaller, this should be added
+            // TODO: we currently do not support pileup alleles in RampedHaplotypeCaller, this should be added ...
+            // List<VariantContext> forcedPileupAlleles = Collections.emptyList();
             final AssemblyResultSet untrimmedAssemblyResult = AssemblyBasedCallerUtils.assembleReads(context.region, hcArgs, readsHeader, samplesList, logger, referenceReader, assemblyEngine, aligner,
                     !hcArgs.doNotCorrectOverlappingBaseQualities, postFilterOnRamp != null);
             RampUtils.logReads(rpArgs.rampsDebugReads, "AFTER untrimmedAssemblyResult reads", context.region.getReads());
@@ -342,7 +339,7 @@ public class RampedHaplotypeCallerEngine extends HaplotypeCallerEngine {
 
             if (assemblyDebugOutStream != null) {
                 assemblyDebugOutStream.write("\nThere were " + untrimmedAssemblyResult.getHaplotypeList().size() + " haplotypes found. Here they are:");
-                for (final String haplotype : untrimmedAssemblyResult.getHaplotypeList().stream().map(Haplotype::toString).sorted().collect(Collectors.toList())) {
+                for (final String haplotype : untrimmedAssemblyResult.getHaplotypeList().stream().map(Haplotype::toString).sorted().toList()) {
                     assemblyDebugOutStream.write(haplotype);
                 }
             }

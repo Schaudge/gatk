@@ -612,7 +612,7 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
      * @param altQuals      Phred-scaled qualities of alt-supporting reads
      * @param repeatFactor  Number of times each alt qual is duplicated
      * @param afPrior       Beta prior on alt allele fraction
-     * @return
+     * @return double
      */
     public static double logLikelihoodRatio(final int nRef, final List<Byte> altQuals, final int repeatFactor, final Optional<BetaDistributionShape> afPrior) {
         final int nAlt = repeatFactor * altQuals.size();
@@ -700,7 +700,7 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
         private static double MULTIPLE_SUBSTITUTION_BASE_QUAL_CORRECTION;
 
         // indices 0-3 are A,C,G,T; 4 is other substitution (just in case it's some exotic protocol); 5 is indel
-        private List<ByteArrayList> buffers = IntStream.range(0,6).mapToObj(n -> new ByteArrayList()).collect(Collectors.toList());
+        private final List<ByteArrayList> buffers = IntStream.range(0,6).mapToObj(n -> new ByteArrayList()).toList();
 
         public PileupQualBuffer(final double multipleSubstitutionQualCorrection) {
             MULTIPLE_SUBSTITUTION_BASE_QUAL_CORRECTION = multipleSubstitutionQualCorrection;
