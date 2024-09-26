@@ -773,7 +773,7 @@ public final class AssemblyBasedCallerUtils {
 
     /**
      * If at least one exists, returns a concrete (not NONREF) site-specific (starting at the current POS) alternate allele
-     * from within the current variant context. (Assume that alleles sorted by depth)
+     * from within the current variant context. (Alleles are sorted by tumorLogOdds)
      */
     private static Allele getSiteSpecificAlternateAllele(final VariantContext call) {
         return call.getAlternateAlleles().stream().filter(AssemblyBasedCallerUtils::isSiteSpecificAltAllele).findFirst().orElse(null);

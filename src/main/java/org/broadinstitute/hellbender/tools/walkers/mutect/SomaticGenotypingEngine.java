@@ -159,7 +159,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
             if (allAltAlleles.size() > 1)
                 alleleFilters = (allele) -> (forcedAlleles.contains(allele) && tumorLogOdds.getAlt(allele) * 11 > maxAlternativeLogOdd)
                         || tumorLogOdds.getAlt(allele) > MTAC.getEmissionLogOdds();
-            final List<Allele> tumorAltAlleles = allAltAlleles.stream().filter(alleleFilters::apply).toList();
+            final List<Allele> tumorAltAlleles = allAltAlleles.stream().filter(alleleFilters::apply).sorted(Comparator.comparingDouble(tumorLogOdds::getAlt).reversed()).toList();
 
             final List<Allele> allelesToGenotype = tumorAltAlleles.stream()
                     .filter(allele -> forcedAlleles.contains(allele) || !hasNormal || MTAC.genotypeGermlineSites || normalLogOdds.getAlt(allele) > MathUtils.log10ToLog(MTAC.normalLog10Odds))
