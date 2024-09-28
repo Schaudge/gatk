@@ -689,6 +689,7 @@ public final class AssemblyBasedCallerUtils {
                         final Allele remappedSpanningEventAltAllele = spanningEventAlleleMappingToMergedVc.get(overlappingEvent.altAllele());
                         // in the case of GGA mode the spanning event might not match an allele in the mergedVC
                         if (result.containsKey(remappedSpanningEventAltAllele)) {
+                            h.getEventMap().replaceEvent(new Event(ref, remappedSpanningEventAltAllele, overlappingEvent.getContig(), loc));
                             result.get(remappedSpanningEventAltAllele).add(h);
                         }
                     } else {
@@ -697,7 +698,7 @@ public final class AssemblyBasedCallerUtils {
                         // because we're in GGA mode and it's not an allele we want
                         continue;
                     }
-                } else {
+                } else if (!overlappingEvent.isPaddedEvent()) {
                     if (emitSpanningDels) {
                         // the event starts prior to the current location, so it's a spanning deletion
                         if (!result.containsKey(Allele.SPAN_DEL)) {
@@ -759,6 +760,7 @@ public final class AssemblyBasedCallerUtils {
             // }
 
             // keep track of the haplotypes that contain this particular alternate allele
+            // TODO: change the haplotypeMap for all alternate alleles, but not only for the high confidence one!
             final Allele alt = getSiteSpecificAlternateAllele(call);
             final Predicate<Event> hasThisAlt = vc -> (vc.getStart() == call.getStart() && vc.altAllele().equals(alt));
             final Set<Haplotype> hapsWithAllele = calledHaplotypes.stream()

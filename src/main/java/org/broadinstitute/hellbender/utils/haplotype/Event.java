@@ -35,6 +35,15 @@ public class Event implements Locatable {
         stop = start + refAllele.length() - 1;
     }
 
+    // Make an event with some reference sequence padded! Added by Schaudge King!
+    public Event(final Allele ref, final Allele alt, final String contig, final int location) {
+        this.contig = contig;
+        this.start = location;
+        refAllele = ref;
+        altAllele = alt;
+        stop = location + refAllele.length() - 1;
+    }
+
     /**
      * Returns a pair of alleles that are in minimal representation (removes identical suffixes)
      * @param ref allele not in minimal representation
@@ -103,6 +112,17 @@ public class Event implements Locatable {
     public boolean isSimpleDeletion() { return refAllele.length() > 1 && altAllele.length() == 1; }
 
     public boolean isMNP() { return refAllele.length() > 1 && refAllele.length() == altAllele.length(); }
+
+    public boolean isPaddedEvent() {
+        final int refSeqLength = refAllele.length();
+        final int altSeqLength = altAllele.length();
+        if (refSeqLength > 1 && altSeqLength > 1) {
+            return refAllele().getBaseString().substring(refSeqLength - 1).equals(
+                    altAllele().getBaseString().substring(altSeqLength - 1)
+            );
+        }
+        return false;
+    }
 
     public void setVariantAttribute(final String key, final String value) {
         if (attributesForVariantContext == null) {

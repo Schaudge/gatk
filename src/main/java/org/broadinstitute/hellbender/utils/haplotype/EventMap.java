@@ -156,6 +156,12 @@ public final class EventMap extends TreeMap<Integer, Event> {
         putIfAbsent(newEvent.getStart(), newEvent);
     }
 
+    // replace the event by a new base padded event at the same position, and should only one event in this position
+    public void replaceEvent(final Event newEvent) {
+        Utils.nonNull(newEvent);
+        put(newEvent.getStart(), newEvent);
+    }
+
     /**
      * Merge two events with the same start into a single compound event.  The resulting event will not be a SNP
      * or a simple indel.  This should not in any way be conflated with making a multiallelic VariantContext.  Here we
