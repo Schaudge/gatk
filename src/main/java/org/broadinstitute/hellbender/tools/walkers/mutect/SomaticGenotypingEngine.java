@@ -259,9 +259,8 @@ public class SomaticGenotypingEngine implements AutoCloseable {
                 // but there are some modes where we genotype events that were never in an assembly graph, in which case
                 // this annotation is irrelevant
                 if (haplotypesByEvent.containsKey(event)) {
-                    final Haplotype bestHaplotype = haplotypesByEvent.get(event).stream()
-                            .sorted(Comparator.comparingInt(h -> haplotypeSupportCounts.getOrDefault(h, new MutableInt(0)).intValue()).reversed())
-                            .findFirst().get();
+                    final Haplotype bestHaplotype = haplotypesByEvent.get(event).stream().
+                            max(Comparator.comparingInt(h -> haplotypeSupportCounts.getOrDefault(h, new MutableInt(0)).intValue())).get();
 
                     eventCountAnnotations.computeIfAbsent(outputCall, vc -> new ArrayList<>())
                             .add((int) bestHaplotype.getEventMap().getEvents().stream().filter(potentialSomaticEventsInRegion::contains).count());
@@ -270,7 +269,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
         }
         final List<VariantContext> outputCallsWithEventCountAnnotation = outputCalls.stream()
                 .map(vc -> new VariantContextBuilder(vc)
-                        .attribute(GATKVCFConstants.EVENT_COUNT_IN_HAPLOTYPE_KEY, eventCountAnnotations.get(vc))
+                        .attribute(GATKVCFConstants.EVENT_COUNT_IN_HAPLOTYPE_KEY, eventCountAnnotations.containsKey(vc) ? eventCountAnnotations.get(vc): 0)
                         .attribute(GATKVCFConstants.EVENT_COUNT_IN_REGION_KEY, potentialSomaticEventsInRegion.size()).make())
                 .collect(Collectors.toList());
         return new CalledHaplotypes(outputCallsWithEventCountAnnotation, calledHaplotypes);
