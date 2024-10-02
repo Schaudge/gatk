@@ -253,8 +253,8 @@ public class SomaticGenotypingEngine implements AutoCloseable {
         final Map<VariantContext, List<Integer>> eventCountAnnotations = new HashMap<>();
         for (final VariantContext outputCall : outputCalls) {
             for (final Allele allele : outputCall.getAlternateAlleles()) {
-                // note: this creates the minimal representation behind the scenes
-                final Event event = new Event(outputCall.getContig(), outputCall.getStart(), outputCall.getReference(), allele);
+                // note: this creates the merged padding representation
+                final Event event = new Event(outputCall.getReference(), allele, outputCall.getContig(), outputCall.getStart());
                 // haplotypesByEvent contains every *assembled* event, including events injected into the original assembly,
                 // but there are some modes where we genotype events that were never in an assembly graph, in which case
                 // this annotation is irrelevant
@@ -264,12 +264,13 @@ public class SomaticGenotypingEngine implements AutoCloseable {
 
                     eventCountAnnotations.computeIfAbsent(outputCall, vc -> new ArrayList<>())
                             .add((int) bestHaplotype.getEventMap().getEvents().stream().filter(potentialSomaticEventsInRegion::contains).count());
-                }
+                } else
+                    eventCountAnnotations.computeIfAbsent(outputCall, vc -> new ArrayList<>()).add(0);
             }
         }
         final List<VariantContext> outputCallsWithEventCountAnnotation = outputCalls.stream()
                 .map(vc -> new VariantContextBuilder(vc)
-                        .attribute(GATKVCFConstants.EVENT_COUNT_IN_HAPLOTYPE_KEY, eventCountAnnotations.getOrDefault(vc, Collections.singletonList(0)))
+                        .attribute(GATKVCFConstants.EVENT_COUNT_IN_HAPLOTYPE_KEY, eventCountAnnotations.get(vc))
                         .attribute(GATKVCFConstants.EVENT_COUNT_IN_REGION_KEY, potentialSomaticEventsInRegion.size()).make())
                 .collect(Collectors.toList());
         return new CalledHaplotypes(outputCallsWithEventCountAnnotation, calledHaplotypes);
