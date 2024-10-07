@@ -151,7 +151,6 @@ public class SomaticGenotypingEngine implements AutoCloseable {
             final PerAlleleCollection<Double> normalLogOdds = diploidAltLogOdds(logNormalMatrix);
             final PerAlleleCollection<Double> normalArtifactLogOdds = somaticLogOdds(logNormalMatrix);
 
-
             final Set<Allele> forcedAlleles = AssemblyBasedCallerUtils.allelesConsistentWithGivenAlleles(givenAlleles, mergedVC);
             final List<Allele> allAltAlleles = mergedVC.getAlternateAlleles();
             final double maxAlternativeLogOdd = allAltAlleles.stream().mapToDouble(tumorLogOdds::get).max().orElse(0.0001);
@@ -181,7 +180,6 @@ public class SomaticGenotypingEngine implements AutoCloseable {
 
             final List<Allele> allAllelesToEmit = ListUtils.union(Arrays.asList(mergedVC.getReference()), tumorAltAlleles);
 
-
             final Map<String, Object> negativeLogPopulationAFAnnotation =
                     getNegativeLogPopulationAFAnnotation(featureContext.getValues(MTAC.germlineResource, loc),
                             allAllelesToEmit, MTAC.getDefaultAlleleFrequency());
@@ -204,12 +202,6 @@ public class SomaticGenotypingEngine implements AutoCloseable {
 
             addGenotypes(logLikelihoods, allAllelesToEmit, callVcb);
             final VariantContext call = callVcb.make();
-            final VariantContext trimmedCall = GATKVariantContextUtils.trimAlleles(call, true, true);
-            final List<Allele> trimmedAlleles = trimmedCall.getAlleles();
-            final List<Allele> untrimmedAlleles = call.getAlleles();
-            final Map<Allele, List<Allele>> trimmedToUntrimmedAlleleMap = IntStream.range(0, trimmedCall.getNAlleles()).boxed()
-                    .collect(Collectors.toMap(n -> trimmedAlleles.get(n), n -> Arrays.asList(untrimmedAlleles.get(n))));
-            final AlleleLikelihoods<Fragment, Allele> trimmedLikelihoods = logLikelihoods.marginalize(trimmedToUntrimmedAlleleMap);
 
             // AlleleLikelihoods for annotation only
             final AlleleLikelihoods<GATKRead, Allele> logReadAlleleLikelihoods = logReadLikelihoods.marginalize(alleleMapper);
@@ -219,18 +211,16 @@ public class SomaticGenotypingEngine implements AutoCloseable {
                 logReadAlleleLikelihoods.addNonReferenceAllele(Allele.NON_REF_ALLELE);
             }
 
-            final AlleleLikelihoods<GATKRead, Allele> trimmedLikelihoodsForAnnotation = logReadAlleleLikelihoods.marginalize(trimmedToUntrimmedAlleleMap);
-
-            final VariantContext annotatedCall =  annotationEngine.annotateContext(trimmedCall, featureContext, referenceContext,
-                    trimmedLikelihoodsForAnnotation, Optional.of(trimmedLikelihoods), Optional.of(logFragmentLikelihoods), Optional.empty(), a -> true);
+            final VariantContext annotatedCall =  annotationEngine.annotateContext(call, featureContext, referenceContext,
+                    logReadAlleleLikelihoods, Optional.of(logLikelihoods), Optional.of(logFragmentLikelihoods), Optional.empty(), a -> true);
             if (withBamOut) {
-                AssemblyBasedCallerUtils.annotateReadLikelihoodsWithSupportedAlleles(trimmedCall, trimmedLikelihoods, Fragment::getReads);
+                AssemblyBasedCallerUtils.annotateReadLikelihoodsWithSupportedAlleles(call, logLikelihoods, Fragment::getReads);
             }
 
             final Optional<List<VariantContext>> truthVCs = MTAC.mutect3TrainingTruth == null ? Optional.empty() :
                     Optional.of(featureContext.getValues(MTAC.mutect3TrainingTruth, mergedVC.getStart()));
             mutect3DatasetEngine.ifPresent(engine -> engine.addData(referenceContext, annotatedCall, truthVCs,
-                    trimmedLikelihoodsForAnnotation, logFragmentLikelihoods, logLikelihoods, MTAC.mutect3DatasetMode));
+                    logReadAlleleLikelihoods, logFragmentLikelihoods, logLikelihoods, MTAC.mutect3DatasetMode));
 
             call.getAlleles().stream().map(alleleMapper::get).filter(Objects::nonNull).forEach(calledHaplotypes::addAll);
             returnCalls.add( annotatedCall );
