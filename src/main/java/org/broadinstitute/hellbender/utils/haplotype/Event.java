@@ -113,15 +113,13 @@ public class Event implements Locatable {
 
     public boolean isMNP() { return refAllele.length() > 1 && refAllele.length() == altAllele.length(); }
 
-    public boolean isPaddedEvent() {
+    public boolean isTrimmedEvent() {
         final int refSeqLength = refAllele.length();
         final int altSeqLength = altAllele.length();
         if (refSeqLength > 1 && altSeqLength > 1) {
-            return refAllele().getBaseString().substring(refSeqLength - 1).equals(
-                    altAllele().getBaseString().substring(altSeqLength - 1)
-            );
+            return ! refAllele().getBaseString().substring(refSeqLength - 1).equals(altAllele().getBaseString().substring(altSeqLength - 1));
         }
-        return false;
+        return true;
     }
 
     public void setVariantAttribute(final String key, final String value) {

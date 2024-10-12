@@ -698,7 +698,7 @@ public final class AssemblyBasedCallerUtils {
                         // because we're in GGA mode and it's not an allele we want
                         continue;
                     }
-                } else if (!overlappingEvent.isPaddedEvent()) {
+                } else {
                     if (emitSpanningDels) {
                         // the event starts prior to the current location, so it's a spanning deletion
                         if (!result.containsKey(Allele.SPAN_DEL)) {
