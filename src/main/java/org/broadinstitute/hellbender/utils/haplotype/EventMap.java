@@ -286,7 +286,7 @@ public final class EventMap extends TreeMap<Integer, Event> {
      * Returns any events in the map that overlap loc, including spanning deletions and events that start at loc.
      */
     public List<Event> getOverlappingEvents(final int loc) {
-        final List<Event> overlappingEvents = headMap(loc, true).values().stream().filter(v -> (v.getStart() >= loc || v.isTrimmedEvent()) && v.getEnd() >= loc).collect(Collectors.toList());
+        final List<Event> overlappingEvents = headMap(loc, true).values().stream().filter(v -> (v.getStart() >= loc || v.isTrimmedEvent()) && v.getEnd() >= loc).toList();
         // if we're at the start of an insertion, exclude deletions that end here; otherwise keep everything
         final Predicate<Event> filter = overlappingEvents.stream().anyMatch(Event::isSimpleInsertion) ?
                 v -> !(v.isSimpleDeletion() && v.getEnd() == loc) : v -> true;
