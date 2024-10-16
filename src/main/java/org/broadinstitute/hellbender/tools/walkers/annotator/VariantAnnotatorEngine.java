@@ -4,14 +4,12 @@ import htsjdk.variant.variantcontext.*;
 import htsjdk.variant.vcf.*;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.broadinstitute.hellbender.cmdline.StandardArgumentDefinitions;
 import org.broadinstitute.hellbender.engine.FeatureContext;
 import org.broadinstitute.hellbender.engine.FeatureDataSource;
 import org.broadinstitute.hellbender.engine.FeatureInput;
 import org.broadinstitute.hellbender.engine.ReferenceContext;
 import org.broadinstitute.hellbender.exceptions.GATKException;
 import org.broadinstitute.hellbender.exceptions.UserException;
-import org.broadinstitute.hellbender.tools.walkers.GenotypeGVCFsAnnotationArgumentCollection;
 import org.broadinstitute.hellbender.tools.walkers.annotator.allelespecific.ReducibleAnnotation;
 import org.broadinstitute.hellbender.tools.walkers.annotator.allelespecific.ReducibleAnnotationData;
 import org.broadinstitute.hellbender.utils.IntervalUtils;
@@ -26,7 +24,6 @@ import org.broadinstitute.hellbender.utils.variant.GATKVariantContextUtils;
 
 import java.util.*;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
 
 /**
  * The class responsible for computing annotations for variants.
@@ -39,8 +36,8 @@ public final class VariantAnnotatorEngine {
     private final List<GenotypeAnnotation> genotypeAnnotations;
     private final List<JumboInfoAnnotation> jumboInfoAnnotations;
     private final List<JumboGenotypeAnnotation> jumboGenotypeAnnotations;
-    private Set<String> reducibleKeys;
-    private List<VAExpression> expressions = new ArrayList<>();
+    private final Set<String> reducibleKeys;
+    private final List<VAExpression> expressions = new ArrayList<>();
 
     private final VariantOverlapAnnotator variantOverlapAnnotator;
     private boolean expressionAlleleConcordance;
@@ -99,9 +96,7 @@ public final class VariantAnnotatorEngine {
         }
         for (InfoFieldAnnotation annot : infoAnnotations) {
             if (annot instanceof ReducibleAnnotation) {
-                for (final String rawKey : ((ReducibleAnnotation) annot).getRawKeyNames()) {
-                    reducibleKeys.add(rawKey);
-                }
+                reducibleKeys.addAll(((ReducibleAnnotation) annot).getRawKeyNames());
             }
         }
     }
@@ -119,7 +114,7 @@ public final class VariantAnnotatorEngine {
         for ( final FeatureInput<VariantContext> fi : featureInputs) {
             overlaps.put(fi, fi.getName());
         }
-        if (overlaps.values().contains(VCFConstants.DBSNP_KEY)){
+        if (overlaps.containsValue(VCFConstants.DBSNP_KEY)){
             throw new GATKException("The map of overlaps must not contain " + VCFConstants.DBSNP_KEY);
         }
         if (dbSNPInput != null) {
@@ -245,8 +240,7 @@ public final class VariantAnnotatorEngine {
 
         // go through all the requested reducible info annotationTypes
         for (final InfoFieldAnnotation annotationType : infoAnnotations) {
-            if (annotationType instanceof ReducibleAnnotation) {
-                ReducibleAnnotation currentASannotation = (ReducibleAnnotation) annotationType;
+            if (annotationType instanceof ReducibleAnnotation currentASannotation) {
                 for (final String rawKey : currentASannotation.getRawKeyNames()) {
                     //here we're assuming that each annotation combines data corresponding to its primary raw key, which is index zero
                     //AS_QD only needs to be combined if it's relying on its primary raw key
@@ -258,7 +252,7 @@ public final class VariantAnnotatorEngine {
                             combinedAnnotations.putAll(annotationsFromCurrentType);
                         }
                         //remove all the raw keys for the annotation because we already used all of them in combineRawData
-                        annotationMap.keySet().removeAll(currentASannotation.getRawKeyNames());
+                        currentASannotation.getRawKeyNames().forEach(annotationMap.keySet()::remove);
                     }
                 }
             }
@@ -285,9 +279,7 @@ public final class VariantAnnotatorEngine {
 
         // go through all the requested info annotationTypes
         for (final InfoFieldAnnotation annotationType : infoAnnotations) {
-            if (annotationType instanceof ReducibleAnnotation) {
-
-                ReducibleAnnotation currentASannotation = (ReducibleAnnotation) annotationType;
+            if (annotationType instanceof ReducibleAnnotation currentASannotation) {
 
                 final Map<String, Object> annotationsFromCurrentType = currentASannotation.finalizeRawData(vc, originalVC);
                 if (annotationsFromCurrentType != null) {
@@ -317,8 +309,7 @@ public final class VariantAnnotatorEngine {
         final VariantContextBuilder builder = new VariantContextBuilder(vc).attributes(variantAnnotations);
 
         // annotate genotypes, creating another new VC in the process
-        final VariantContext annotated = builder.make();
-        return annotated;
+        return builder.make();
     }
 
     /**
@@ -401,8 +392,7 @@ public final class VariantAnnotatorEngine {
         //TODO see #7543. This spiderweb of cases should be addressed as part of a more comprehensive refactor of the annotation code with JumboAnnotations.
         if ((fragmentLikelihoods.isPresent() && haplotypeLikelihoods.isPresent()) || readHaplotypeAlleleLikelihoods.isPresent()) {
             jumboInfoAnnotations.stream()
-                    .map(annot -> annot.annotate(ref, features, vc, likelihoods,
-                            fragmentLikelihoods.isPresent()? fragmentLikelihoods.get() : null,
+                    .map(annot -> annot.annotate(ref, features, vc, likelihoods, fragmentLikelihoods.orElse(null),
                             haplotypeLikelihoods.isPresent()? haplotypeLikelihoods.get(): readHaplotypeAlleleLikelihoods.get()))
                     .forEach(infoAnnotMap::putAll);
         }
@@ -416,7 +406,7 @@ public final class VariantAnnotatorEngine {
                                                final Optional<AlleleLikelihoods<Fragment, Allele>> fragmentLikelihoods,
                                                final Optional<AlleleLikelihoods<Fragment, Haplotype>> haplotypeLikelihoods,
                                                final Predicate<VariantAnnotation> addAnnot) {
-        if (!jumboGenotypeAnnotations.isEmpty() && (!fragmentLikelihoods.isPresent() || !haplotypeLikelihoods.isPresent())) {
+        if (!jumboGenotypeAnnotations.isEmpty() && (fragmentLikelihoods.isEmpty() || haplotypeLikelihoods.isEmpty())) {
             jumboAnnotationsLogger.warn("Jumbo genotype annotations requested but fragment likelihoods or haplotype likelihoods were not given.");
         }
         if ( genotypeAnnotations.isEmpty() && jumboGenotypeAnnotations.isEmpty()) {
@@ -471,7 +461,7 @@ public final class VariantAnnotatorEngine {
 
             final String bindingName = fullExpression.substring(0, indexOfDot);
             Optional<FeatureInput<VariantContext>> binding = dataSourceList.stream().filter(ds -> ds.getName().equals(bindingName)).findFirst();
-            if (!binding.isPresent()) {
+            if (binding.isEmpty()) {
                 throw new UserException.BadInput("The requested expression '"+fullExpression+"' is invalid, could not find vcf input file");
             }
             this.binding = binding.get();
@@ -482,7 +472,7 @@ public final class VariantAnnotatorEngine {
         }
     }
 
-    protected List<VAExpression> getRequestedExpressions() { return expressions; }
+    private List<VAExpression> getRequestedExpressions() { return expressions; }
 
     // select specific expressions to use
     public void addExpressions(Set<String> expressionsToUse, List<FeatureInput<VariantContext>> dataSources, boolean expressionAlleleConcordance) {//, Set<VCFHeaderLines>) {
@@ -524,7 +514,7 @@ public final class VariantAnnotatorEngine {
                 } else if (expression.fieldName.equals("ALT")) {
                     attributes.put(expression.fullName, expressionVC.getAlternateAllele(0).getDisplayString());
                 } else if (expression.fieldName.equals("FILTER")) {
-                    final String filterString = expressionVC.isFiltered() ? expressionVC.getFilters().stream().collect(Collectors.joining(",")) : "PASS";
+                    final String filterString = expressionVC.isFiltered() ? String.join(",", expressionVC.getFilters()) : "PASS";
                     attributes.put(expression.fullName, filterString);
                 } else if (expressionVC.hasAttribute(expression.fieldName)) {
                     // find the info field

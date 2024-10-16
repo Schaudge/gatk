@@ -178,7 +178,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
                 continue;
             }
 
-            final List<Allele> allAllelesToEmit = ListUtils.union(Arrays.asList(mergedVC.getReference()), tumorAltAlleles);
+            final List<Allele> allAllelesToEmit = ListUtils.union(Collections.singletonList(mergedVC.getReference()), tumorAltAlleles);
 
             final Map<String, Object> negativeLogPopulationAFAnnotation =
                     getNegativeLogPopulationAFAnnotation(featureContext.getValues(MTAC.germlineResource, loc),
@@ -191,7 +191,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
 
             if (hasNormal) {
                 callVcb.attribute(GATKVCFConstants.NORMAL_ARTIFACT_LOG_10_ODDS_KEY,
-                        Arrays.stream(normalArtifactLogOdds.asDoubleArray(tumorAltAlleles)).map(x->MathUtils.logToLog10(x)).toArray());
+                        Arrays.stream(normalArtifactLogOdds.asDoubleArray(tumorAltAlleles)).map(MathUtils::logToLog10).toArray());
                 callVcb.attribute(GATKVCFConstants.NORMAL_LOG_10_ODDS_KEY,
                         Arrays.stream(normalLogOdds.asDoubleArray(tumorAltAlleles)).map(MathUtils::logToLog10).toArray());
             }
@@ -250,7 +250,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
                 // this annotation is irrelevant
                 if (haplotypesByEvent.containsKey(event)) {
                     final Haplotype bestHaplotype = haplotypesByEvent.get(event).stream().
-                            max(Comparator.comparingInt(h -> haplotypeSupportCounts.getOrDefault(h, new MutableInt(0)).intValue())).get();
+                            max(Comparator.comparingInt(h -> haplotypeSupportCounts.getOrDefault(h, new MutableInt(0)).intValue())).orElseThrow();
 
                     eventCountAnnotations.computeIfAbsent(outputCall, vc -> new ArrayList<>())
                             .add((int) bestHaplotype.getEventMap().getEvents().stream().filter(potentialSomaticEventsInRegion::contains).count());
@@ -365,7 +365,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
     }
 
     public static <EVIDENCE extends Locatable> LikelihoodMatrix<EVIDENCE, Allele> combinedLikelihoodMatrix(final List<LikelihoodMatrix<EVIDENCE, Allele>> matrices, final AlleleList<Allele> alleleList) {
-        final List<EVIDENCE> reads = matrices.stream().flatMap(m -> m.evidence().stream()).collect(Collectors.toList());
+        final List<EVIDENCE> reads = matrices.stream().flatMap(m -> m.evidence().stream()).toList();
         final AlleleLikelihoods<EVIDENCE, Allele> combinedLikelihoods = new AlleleLikelihoods<>(SampleList.singletonSampleList("COMBINED"), alleleList, ImmutableMap.of("COMBINED", reads));
 
         int combinedReadIndex = 0;
@@ -394,7 +394,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
      *                      need the ref allele in case the germline resource has a more or less parsimoniuous representation
      *                      For example, eg ref = A, alt = C; germline ref = AT, germline alt = CT
      * @param afOfAllelesNotInGermlineResource  default value of germline AF annotation
-     * @return
+     * @return AF Annotation
      */
     private static Map<String, Object> getNegativeLogPopulationAFAnnotation(List<VariantContext> germlineResourceVariants,
                                                                             final List<Allele> allAlleles,
@@ -411,7 +411,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
      *      *               For example, eg ref = A, alt = C; germline ref = AT, germline alt = CT
      * @param germlineVCs    Germline resource variant contexts from which AF INFO field is drawn
      * @param afOfAllelesNotInGermlineResource  Default value of population AF annotation
-     * @return
+     * @return double array
      */
     @VisibleForTesting
     static double[] getGermlineAltAlleleFrequencies(final List<Allele> allAlleles, final List<VariantContext> germlineVCs, final double afOfAllelesNotInGermlineResource) {
@@ -446,6 +446,6 @@ public class SomaticGenotypingEngine implements AutoCloseable {
      */
     @Override
     public void close() {
-        mutect3DatasetEngine.ifPresent(engine -> engine.close());
+        mutect3DatasetEngine.ifPresent(Mutect3DatasetEngine::close);
     }
 }

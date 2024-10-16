@@ -123,8 +123,8 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
 
     private final Optional<F1R2CountsCollector> f1R2CountsCollector;
 
-    private PileupQualBuffer tumorPileupQualBuffer;
-    private PileupQualBuffer normalPileupQualBuffer;
+    private final PileupQualBuffer tumorPileupQualBuffer;
+    private final PileupQualBuffer normalPileupQualBuffer;
 
     /**
      * Create and initialize a new HaplotypeCallerEngine given a collection of HaplotypeCaller arguments, a reads header,
@@ -454,7 +454,7 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
         likelihoodCalculationEngine.close();
         aligner.close();
         haplotypeBAMWriter.ifPresent(HaplotypeBAMWriter::close);
-        assembledEventMapVcfOutputWriter.ifPresent(writer -> {assembledEventMapVariants.get().forEach(writer::add); writer.close();});
+        assembledEventMapVcfOutputWriter.ifPresent(writer -> {assembledEventMapVariants.orElseThrow().forEach(writer::add); writer.close();});
         referenceReader.close();
         genotypingEngine.close();
     }
@@ -493,7 +493,7 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
             final ReadPileup normalPileup = pileup.makeFilteredPileup(pe -> isNormalSample(ReadUtils.getSampleName(pe.getRead(), header)));
             normalPileupQualBuffer.accumulateQuals(normalPileup, refBase, MTAC.pcrSnvQual);
             final Pair<Integer, ByteArrayList> bestNormalAltAllele = normalPileupQualBuffer.likeliestIndexAndQuals();
-            if (bestNormalAltAllele.getLeft() == bestNormalAltAllele.getLeft()) {
+            if (Objects.equals(bestNormalAltAllele.getLeft(), bestNormalAltAllele.getLeft())) {
                 final int normalAltCount = bestNormalAltAllele.getRight().size();
                 final double normalQualSum = normalPileupQualBuffer.qualSum(bestNormalAltAllele.getLeft());
                 if (normalAltCount > normalPileup.size() * MAX_ALT_FRACTION_IN_NORMAL && normalQualSum > MAX_NORMAL_QUAL_SUM) {
@@ -549,7 +549,7 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
                         return ((Number) x).doubleValue();
                     } else {
                         String string = (String) x;
-                        return string.equals(VCFConstants.MISSING_VALUE_v4) ? defaultValue : Double.valueOf(string); // throws an exception if this isn't a string
+                        return string.equals(VCFConstants.MISSING_VALUE_v4) ? defaultValue : Double.parseDouble(string); // throws an exception if this isn't a string
                     }
                 }).collect(Collectors.toList());
     }

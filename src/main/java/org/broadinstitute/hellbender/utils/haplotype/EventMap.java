@@ -14,6 +14,7 @@ import org.broadinstitute.hellbender.utils.BaseUtils;
 import org.broadinstitute.hellbender.utils.Utils;
 import org.broadinstitute.hellbender.utils.param.ParamUtils;
 
+import java.io.Serial;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -22,6 +23,7 @@ import java.util.stream.Collectors;
  * Extract simple VariantContext events from a single haplotype
  */
 public final class EventMap extends TreeMap<Integer, Event> {
+    @Serial
     private static final long serialVersionUID = 1L;
 
     private static final Logger logger = LogManager.getLogger(EventMap.class);
@@ -173,7 +175,7 @@ public final class EventMap extends TreeMap<Integer, Event> {
      * e1 can be SNP, and e2 can then be either a insertion or deletion.
      * If e1 is an indel, then e2 must be the opposite type (e1 deletion => e2 must be an insertion)
      */
-    protected static Event makeCompoundEvents(final Event e1, final Event e2) {
+    static Event makeCompoundEvents(final Event e1, final Event e2) {
         Utils.validateArg( e1.getStart() == e2.getStart(), "e1 and e2 must have the same start");
 
         if ( e1.isSNP() || e2.isSNP()) {
