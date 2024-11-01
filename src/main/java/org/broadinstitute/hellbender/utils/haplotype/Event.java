@@ -63,8 +63,8 @@ public class Event implements Locatable {
         while (overlapCount < minLen && refBases[refBases.length - 1 - overlapCount] == altBases[altBases.length - 1 - overlapCount]) {
             overlapCount++;
         }
-        final byte[] newRefBases = Arrays.copyOf(refBases, ref.getBases().length - overlapCount);
-        final byte[] newAltBases = Arrays.copyOf(altBases, alt.getBases().length - overlapCount);
+        final byte[] newRefBases = Arrays.copyOf(refBases, refBases.length - overlapCount);
+        final byte[] newAltBases = Arrays.copyOf(altBases, altBases.length - overlapCount);
         final Allele newRefAllele = Allele.create(newRefBases, true);
         final Allele newAltAllele = Allele.create(newAltBases, false);
         return(new Pair<>(newRefAllele, newAltAllele));

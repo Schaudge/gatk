@@ -2,8 +2,7 @@ package org.broadinstitute.hellbender.tools.walkers.annotator;
 
 import com.google.common.collect.Lists;
 import htsjdk.samtools.SAMSequenceDictionary;
-import htsjdk.variant.variantcontext.Allele;
-import htsjdk.variant.variantcontext.VariantContext;
+import htsjdk.variant.variantcontext.*;
 import htsjdk.variant.variantcontext.writer.VariantContextWriter;
 import htsjdk.variant.vcf.*;
 import org.apache.commons.lang3.mutable.MutableInt;
@@ -240,6 +239,29 @@ public class VariantAnnotator extends VariantWalker {
 
         // if the reference is present and base is not ambiguous, we can annotate
         if (refContext.getBases().length == 0 || BaseUtils.simpleBaseToBaseIndex(refContext.getBase()) != -1 ) {
+            if (vc.getNAlleles() == 2) {     // reduce for the untrimmed simple variation, written by Schaudge King.
+                final byte[] refBases = vc.getReference().getBases();
+                final byte[] altBases = vc.getAlternateAllele(0).getBases();
+                if (refBases.length > 1 && altBases.length > 1 && refBases[refBases.length - 1] == altBases[altBases.length - 1]) {
+                    final int minLen = Math.min(refBases.length, altBases.length) - 1;
+                    int overlapCount = 1;
+                    for (; overlapCount < minLen; overlapCount++)
+                        if (refBases[refBases.length - 1 - overlapCount] != altBases[altBases.length - 1 - overlapCount]) break;
+                    List<Allele> trimmedAlleles = new ArrayList<>();
+                    final byte[] trimmedRefBases = Arrays.copyOf(refBases, refBases.length - overlapCount);
+                    final byte[] trimmedAltBases = Arrays.copyOf(altBases, altBases.length - overlapCount);
+                    trimmedAlleles.add(Allele.create(trimmedRefBases, true));
+                    trimmedAlleles.add(Allele.create(trimmedAltBases, false));
+                    List<Genotype> newGenotypes = new ArrayList<>();
+                    vc.getGenotypes().stream().map(gt -> new GenotypeBuilder(gt).alleles(trimmedAlleles).make()).forEach(newGenotypes::add);
+                    final VariantContext trimmedVC = new VariantContextBuilder(vc).
+                            alleles(trimmedAlleles).stop(vc.getEnd() - overlapCount).genotypes(newGenotypes).make();
+                    final ReferenceContext expandedRefContext = new ReferenceContext(refContext, new SimpleInterval(trimmedVC).expandWithinContig(REFERENCE_PADDING, sequenceDictionary));
+                    VariantContext annotatedVC = annotatorEngine.annotateContext(trimmedVC, fc, expandedRefContext, makeLikelihoods(trimmedVC, readsContext), a -> true);
+                    vcfWriter.add(annotatedVC);
+                    return;
+                }
+            }
             final ReferenceContext expandedRefContext = !hasReference() ? refContext :
                     new ReferenceContext(refContext, new SimpleInterval(vc).expandWithinContig(REFERENCE_PADDING, sequenceDictionary));
             VariantContext annotatedVC = annotatorEngine.annotateContext(vc, fc, expandedRefContext, makeLikelihoods(vc, readsContext), a -> true);
