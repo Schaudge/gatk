@@ -782,10 +782,16 @@ public final class AssemblyBasedCallerUtils {
     }
 
     /**
-     * If exists, returns the first alternate allele depth from the first (tumor) sample within the current variant context.
+     * If exists, returns the paired depth of first alternate allele depth and total depth from the first (tumor) sample within the current variant context.
      */
-    private static int getAltDepth(final VariantContext call) {
-        return call.getGenotype(0).getAD()[1];
+    private static Pair<Integer, Integer> getPairDepth(final VariantContext call) {
+        int firstAltDepth = 0, totalDepth = 0;
+        final int [] alleleDepth = call.getGenotype(0).getAD();
+        for (int _idx = 0; _idx < alleleDepth.length; _idx++) {
+            if (_idx == 1) firstAltDepth = alleleDepth[_idx];
+            totalDepth += alleleDepth[_idx];
+        }
+        return Pair.of(firstAltDepth, totalDepth);
     }
 
     /**
@@ -813,8 +819,8 @@ public final class AssemblyBasedCallerUtils {
         // use the haplotype mapping to connect variants that are always/never present on the same haplotypes
         for ( int i = 0; i < numCalls - 1; i++ ) {
             final VariantContext call = originalCalls.get(i);
-            final int callDepth = getAltDepth(call);
-            final int minPhaseReads = callDepth > 2781 ?  (int) Math.ceil((double) MIN_ALT_ALLELE_DEPTH_FOR_PHASE / 700) : MIN_ALT_ALLELE_DEPTH_FOR_PHASE;
+            final Pair<Integer, Integer> callDepthPair = getPairDepth(call);
+            final int callDepth = callDepthPair.getLeft();
             final Set<Haplotype> haplotypesWithCall = haplotypeMap.get(call);
             if (haplotypesWithCall.isEmpty() || callDepth < MIN_ALT_ALLELE_DEPTH_FOR_PHASE) {
                 continue;
@@ -833,7 +839,8 @@ public final class AssemblyBasedCallerUtils {
 
             for ( int j = i + 1; j < numCalls; ++j) {
                 final VariantContext comp = originalCalls.get(j);
-                final int compDepth = getAltDepth(comp);
+                final Pair<Integer, Integer> compDepthPair = getPairDepth(comp);
+                final int compDepth = compDepthPair.getLeft();
                 final Set<Haplotype> haplotypesWithComp = haplotypeMap.get(comp);
                 if (comp.getStart() > call.getEnd() + MAX_CALL_DISTANCE_FOR_PHASE || haplotypesWithComp.isEmpty() || compDepth < MIN_ALT_ALLELE_DEPTH_FOR_PHASE) {
                     continue;
@@ -849,6 +856,8 @@ public final class AssemblyBasedCallerUtils {
                 // For some high frequency complex long indels, that many reads not coverage the whole indels completely,
                 // and variants will dispatch to different haplotypes, so we relax the conditions for phase set combination!
                 // TODO: more optimal condition to be considered!
+                final int minTotalDepth = Math.min(callDepthPair.getRight(), compDepthPair.getRight());
+                final int minPhaseReads = minTotalDepth > 2798 ?  (int) Math.ceil((double) minTotalDepth / 700) : MIN_ALT_ALLELE_DEPTH_FOR_PHASE;
                 if ( (haplotypesWithCall.size() == haplotypesWithComp.size() && haplotypesWithCall.containsAll(haplotypesWithComp))
                         || (phaseReadsCount >= minPhaseReads && (phaseReadsCount * phaseDiffusionRate > callDepth || phaseReadsCount * phaseDiffusionRate > compDepth))
                         || (callIsOnAllAltHaps && callHaplotypesAvailableForPhasing.containsAll(haplotypesWithComp))
