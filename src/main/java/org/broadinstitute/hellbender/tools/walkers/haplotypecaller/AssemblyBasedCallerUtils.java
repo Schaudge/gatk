@@ -814,6 +814,7 @@ public final class AssemblyBasedCallerUtils {
         for ( int i = 0; i < numCalls - 1; i++ ) {
             final VariantContext call = originalCalls.get(i);
             final int callDepth = getAltDepth(call);
+            final int minPhaseReads = callDepth > 2781 ?  (int) Math.ceil((double) MIN_ALT_ALLELE_DEPTH_FOR_PHASE / 700) : MIN_ALT_ALLELE_DEPTH_FOR_PHASE;
             final Set<Haplotype> haplotypesWithCall = haplotypeMap.get(call);
             if (haplotypesWithCall.isEmpty() || callDepth < MIN_ALT_ALLELE_DEPTH_FOR_PHASE) {
                 continue;
@@ -849,7 +850,7 @@ public final class AssemblyBasedCallerUtils {
                 // and variants will dispatch to different haplotypes, so we relax the conditions for phase set combination!
                 // TODO: more optimal condition to be considered!
                 if ( (haplotypesWithCall.size() == haplotypesWithComp.size() && haplotypesWithCall.containsAll(haplotypesWithComp))
-                        || (phaseReadsCount > 2 && (phaseReadsCount * phaseDiffusionRate > callDepth || phaseReadsCount * phaseDiffusionRate > compDepth))
+                        || (phaseReadsCount >= minPhaseReads && (phaseReadsCount * phaseDiffusionRate > callDepth || phaseReadsCount * phaseDiffusionRate > compDepth))
                         || (callIsOnAllAltHaps && callHaplotypesAvailableForPhasing.containsAll(haplotypesWithComp))
                         || compIsOnAllAltHaps ) {
 
