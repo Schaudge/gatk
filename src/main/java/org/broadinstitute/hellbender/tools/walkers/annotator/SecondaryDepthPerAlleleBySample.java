@@ -34,7 +34,7 @@ import java.util.stream.Collectors;
  * </ul>
  */
 @DocumentedFeature(groupName=HelpConstants.DOC_CAT_ANNOTATORS, groupSummary=HelpConstants.DOC_CAT_ANNOTATORS_SUMMARY, summary="Depth of coverage of each allele per sample for secondary filter bam (SFAD)")
-public final class SecondaryDepthPerAlleleBySample implements GenotypeAnnotation, StandardMutectAnnotation {
+public final class SecondaryDepthPerAlleleBySample implements GenotypeAnnotation {
 
     @Override
     public void annotate(final ReferenceContext ref,

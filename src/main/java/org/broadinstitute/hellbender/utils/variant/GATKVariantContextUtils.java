@@ -666,8 +666,20 @@ public final class GATKVariantContextUtils {
         // Check insertion
         if (pileupElement.isBeforeInsertion()) {
             final String insertionBases = pileupElement.getBasesOfImmediatelyFollowingInsertion();
+            final int refLen = referenceAllele.length();
+            final int altLen = altAllele.length();
             // edge case: ignore a deletion immediately preceding an insertion as p.getBasesOfImmediatelyFollowingInsertion() returns null [EB]
-            if ((insertionBases != null) && (Allele.extend(referenceAllele, insertionBases.getBytes()).basesMatch(altAllele))) {
+            if (insertionBases != null && refLen > 1 && altLen > 1) {  // untrimmed insertion match, changed by Schaudge King
+                final byte[] refBases = referenceAllele.getBases();
+                final byte[] altBases = altAllele.getBases();
+                final int minLen = Math.min(refLen, altLen);
+                int postOverlapIndex = 1;
+                for (; postOverlapIndex < minLen; ++postOverlapIndex)
+                    if (refBases[refLen - postOverlapIndex] != altBases[altLen - postOverlapIndex]) break;
+                final String reducedRefBases = referenceAllele.getBaseString().substring(0, refLen - postOverlapIndex + 1) + insertionBases;
+                final String reducedAltBases = altAllele.getBaseString().substring(0, altLen - postOverlapIndex + 1);
+                return reducedRefBases.equals(reducedAltBases);
+            } else if (insertionBases != null && Allele.extend(referenceAllele, insertionBases.getBytes()).basesMatch(altAllele)) {
                 isAltAlleleInThePileup = true;
             }
         } else if (pileupElement.isBeforeDeletionStart()) {
