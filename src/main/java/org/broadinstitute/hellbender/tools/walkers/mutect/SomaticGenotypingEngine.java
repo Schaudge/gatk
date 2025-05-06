@@ -240,9 +240,9 @@ public class SomaticGenotypingEngine implements AutoCloseable {
             final Optional<List<VariantContext>> testTruthVCs = MTAC.permutectTestTruth == null ? Optional.empty() :
                     Optional.of(featureContext.getValues(MTAC.permutectTestTruth, mergedVC.getStart()));
             permutectTrainingDatasetEngines.forEach(engine -> engine.addData(referenceContext, annotatedCall, trainingTruthVCs,
-                    trimmedLikelihoodsForAnnotation, logFragmentLikelihoods, logLikelihoods, MTAC.permutectDatasetMode));
+                    logReadAlleleLikelihoods, logFragmentLikelihoods, logLikelihoods, MTAC.permutectDatasetMode));
             permutectTestDatasetEngines.forEach(engine -> engine.addData(referenceContext, annotatedCall, testTruthVCs,
-                    trimmedLikelihoodsForAnnotation, logFragmentLikelihoods, logLikelihoods, MTAC.permutectDatasetMode));
+                    logReadAlleleLikelihoods, logFragmentLikelihoods, logLikelihoods, MTAC.permutectDatasetMode));
 
             call.getAlleles().stream().map(alleleMapper::get).filter(Objects::nonNull).forEach(calledHaplotypes::addAll);
             returnCalls.add( annotatedCall );
@@ -468,7 +468,7 @@ public class SomaticGenotypingEngine implements AutoCloseable {
      */
     @Override
     public void close() {
-        permutectTrainingDatasetEngines.forEach(engine -> engine.close());
-        permutectTestDatasetEngines.forEach(engine -> engine.close());
+        permutectTrainingDatasetEngines.forEach(PermutectDatasetEngine::close);
+        permutectTestDatasetEngines.forEach(PermutectDatasetEngine::close);
     }
 }
