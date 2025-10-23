@@ -780,7 +780,7 @@ public class HaplotypeCallerEngine implements AssemblyRegionEvaluator {
         }
 
         // run the local assembler, getting back a collection of information on how we should proceed
-        final AssemblyResultSet untrimmedAssemblyResult = AssemblyBasedCallerUtils.assembleReads(region, hcArgs, readsHeader, samplesList, logger, referenceReader, assemblyEngine, aligner, !hcArgs.doNotCorrectOverlappingBaseQualities, hcArgs.fbargs, false);
+        final AssemblyResultSet untrimmedAssemblyResult = AssemblyBasedCallerUtils.assembleReads(region, hcArgs, readsHeader, samplesList, logger, referenceReader, assemblyEngine, aligner, !hcArgs.doNotCorrectOverlappingBaseQualities, false);
         ReadThreadingAssembler.addAssembledVariantsToEventMapOutput(untrimmedAssemblyResult, assembledEventMapVariants, hcArgs.maxMnpDistance, assembledEventMapVcfOutputWriter);
 
         if (assemblyDebugOutStream != null) {
