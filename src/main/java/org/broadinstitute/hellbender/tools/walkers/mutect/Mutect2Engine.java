@@ -716,7 +716,11 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
 
             for (final PileupElement pe : pileup) {
                 final int indelLength = getCurrentOrFollowingIndelLength(pe);
-                if (indelLength > 0) {
+                if (indelLength > 71) {  // Too long (>71 bp) deletion may be unreliable unless enough (> 6) reads, Modified By Schaudge King.
+                    final int longDelCounts = pileup.makeFilteredPileup(p -> p.isDeletion() && p.getCurrentCigarElement().getLength() > 70).size();
+                    final int qualifiedIndelLen = longDelCounts > 6 ? 70 : 1;
+                    accumulateIndel(indelQual(qualifiedIndelLen));
+                } else if (indelLength > 0) {
                     accumulateIndel(indelQual(indelLength));
                 } else if (isNextToUsefulSoftClip(pe)) {
                     accumulateIndel(indelQual(1));

@@ -18,7 +18,7 @@ public class ReadCachingIterator implements Iterator<GATKRead> {
     
     private final Iterator<GATKRead> wrappedIter;
     private List<GATKRead> cache;
-    private static final int INITIAL_CACHE_CAPACITY = 10000;
+    private static final int INITIAL_CACHE_CAPACITY = 15000;
 
     /**
      * @param wrappedIter GATKRead iterator to wrap
