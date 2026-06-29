@@ -699,6 +699,8 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
      */
     private static class PileupQualBuffer {
         private static final int OTHER_SUBSTITUTION = 4;
+        private static final int MIN_QUESTIONABLE_INDEL_LENGTH = 70;
+        private static final int MIN_LONG_INDEL_COUNT = 5;
         private static final int INDEL = 5;
 
         private static double MULTIPLE_SUBSTITUTION_BASE_QUAL_CORRECTION;
@@ -713,13 +715,18 @@ public final class Mutect2Engine implements AssemblyRegionEvaluator, AutoCloseab
         public void accumulateQuals(final ReadPileup pileup, final byte refBase, final int pcrErrorQual) {
             clear();
             final int position = pileup.getLocation().getStart();
+            long longIndelCount = 0;
 
             for (final PileupElement pe : pileup) {
                 final int indelLength = getCurrentOrFollowingIndelLength(pe);
-                if (indelLength > 71) {  // Too long (>71 bp) deletion may be unreliable unless enough (> 6) reads, Modified By Schaudge King.
-                    final int longDelCounts = pileup.makeFilteredPileup(p -> p.isDeletion() && p.getCurrentCigarElement().getLength() > 70).size();
-                    final int qualifiedIndelLen = longDelCounts > 6 ? 70 : 1;
-                    accumulateIndel(indelQual(qualifiedIndelLen));
+                if (indelLength > MIN_QUESTIONABLE_INDEL_LENGTH) {  // Too long (>=71 bp) deletion may be unreliable unless enough (> 5) reads, Modified By Schaudge King.
+                    if (longIndelCount < 1) {
+                        longIndelCount = pileup.getElementStream().filter(p -> p.isDeletion() && p.getCurrentCigarElement().getLength() > MIN_QUESTIONABLE_INDEL_LENGTH).count();
+                        accumulateIndel(indelQual(longIndelCount > MIN_LONG_INDEL_COUNT ? indelLength : 1));
+                    } else if (longIndelCount > MIN_LONG_INDEL_COUNT)
+                        accumulateIndel(indelQual(indelLength));
+                    else
+                        accumulateIndel(indelQual(2));
                 } else if (indelLength > 0) {
                     accumulateIndel(indelQual(indelLength));
                 } else if (isNextToUsefulSoftClip(pe)) {

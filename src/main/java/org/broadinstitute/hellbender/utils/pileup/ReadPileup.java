@@ -485,7 +485,7 @@ public class ReadPileup implements Iterable<PileupElement> {
         return getElementStream().map(pe -> pe.getRead()).collect(Collectors.toList());
     }
 
-    private Stream<PileupElement> getElementStream() {
+    public Stream<PileupElement> getElementStream() {
         return pileupElements.stream();
     }
 
