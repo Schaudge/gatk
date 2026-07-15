@@ -796,6 +796,7 @@ public final class AssemblyBasedCallerUtils {
 
     /**
      * Construct the mapping from call (variant context) to phase set ID
+     *  variable phaseReadsCount -----> Weakness
      *
      * @param originalCalls    the original unphased calls
      * @param haplotypeMap     mapping from alternate allele to the set of haplotypes that contain that allele
@@ -814,6 +815,7 @@ public final class AssemblyBasedCallerUtils {
         final Map<VariantContext, Triple<Integer, Integer, PhaseGroup>> phaseSetMapping = new HashMap<>(haplotypeMap.size());
 
         final int numCalls = originalCalls.size();
+        final Triple<Integer, Integer, PhaseGroup> initPhase = Triple.of(0, 0, PhaseGroup.PHASE_10);
         int uniqueCounter = 0;
 
         // use the haplotype mapping to connect variants that are always/never present on the same haplotypes
@@ -858,63 +860,44 @@ public final class AssemblyBasedCallerUtils {
                 // TODO: more optimal condition to be considered!
                 final int minTotalDepth = Math.min(callDepthPair.getRight(), compDepthPair.getRight());
                 final int minPhaseReads = minTotalDepth > 2798 ?  (int) Math.ceil((double) minTotalDepth / 700) : MIN_ALT_ALLELE_DEPTH_FOR_PHASE;
-                if ( (haplotypesWithCall.size() == haplotypesWithComp.size() && haplotypesWithCall.containsAll(haplotypesWithComp))
+                if ( (haplotypesWithCall.size() == haplotypesWithComp.size() && (haplotypesWithCall.containsAll(haplotypesWithComp) || haplotypesWithComp.containsAll(haplotypesWithCall)))
                         || (phaseReadsCount >= minPhaseReads && (phaseReadsCount * phaseDiffusionRate > callDepth || phaseReadsCount * phaseDiffusionRate > compDepth))
                         || (callIsOnAllAltHaps && callHaplotypesAvailableForPhasing.containsAll(haplotypesWithComp))
                         || compIsOnAllAltHaps ) {
-
                     // create a new group if these are the first entries
                     if ( ! phaseSetMapping.containsKey(call) ) {
-                        // note that if the comp is already in the map then that is very bad because it means that there is
-                        // another variant that is in phase with the comp but not with the call.  Since that's an un-phasable
-                        // situation, we should abort if we encounter it.
-                        if ( phaseSetMapping.containsKey(comp) ) {
-                            phaseSetMapping.clear();
-                            return phaseSetMapping;
+                        // Only keep the top 2 phaseReadsCount haplotypes to record phase! Modified By Schaudge King.
+                        final int minWeakness = phaseSetMapping.values().stream().mapToInt(Triple::getMiddle).min().orElse(0);
+                        if (uniqueCounter < 2 || phaseReadsCount > minWeakness) {
+                            if (uniqueCounter > 1) { phaseSetMapping.entrySet().removeIf(entry -> entry.getValue().getMiddle() <= minWeakness); }
+
+                            final PhaseGroup phaseGroup = phaseSetMapping.values().stream().findFirst().orElse(initPhase).getRight() == PhaseGroup.PHASE_10 ? PhaseGroup.PHASE_01 : PhaseGroup.PHASE_10;
+                            phaseSetMapping.put(call, Triple.of(uniqueCounter, phaseReadsCount, phaseGroup));
+                            phaseSetMapping.put(comp, Triple.of(uniqueCounter, phaseReadsCount, phaseGroup));
+
+                            // if the call was on all alternate haps but the comp isn't, we need to narrow down the set of
+                            // alt haps we'll consider for further phasing other variants with the call
+                            callHaplotypesAvailableForPhasing.retainAll(haplotypesWithComp);
+                            uniqueCounter++;
                         }
-
-                        // An important note: even for homozygous variants we are setting the phase as "0|1" here. We
-                        // don't know at this point whether the genotype is homozygous vs the variant being on all alt
-                        // haplotypes, for one thing. Also, we cannot possibly know for sure at this time that the genotype for this
-                        // sample will actually be homozygous downstream: there are steps in the pipeline that are liable
-                        // to change the genotypes.  Because we can't make those assumptions here, we have decided to output
-                        // the phase as if the call is heterozygous and then "fix" it downstream as needed.
-                        phaseSetMapping.put(call, Triple.of(uniqueCounter, phaseReadsCount, PhaseGroup.PHASE_01));
-                        phaseSetMapping.put(comp, Triple.of(uniqueCounter, phaseReadsCount, PhaseGroup.PHASE_01));
-
-                        // if the call was on all alternate haps but the comp isn't, we need to narrow down the set of
-                        // alt haps we'll consider for further phasing other variants with the call
-                        callHaplotypesAvailableForPhasing.retainAll(haplotypesWithComp);
-
-                        uniqueCounter++;
                     }
                     // otherwise it's part of an existing group so use that group's unique ID
-                    else if ( ! phaseSetMapping.containsKey(comp) ) {
+                    else if ( phaseSetMapping.containsKey(call) && ! phaseSetMapping.containsKey(comp) ) {
                         final Triple<Integer, Integer, PhaseGroup> callPhase = phaseSetMapping.get(call);
                         phaseSetMapping.put(comp, Triple.of(callPhase.getLeft(), phaseReadsCount, callPhase.getRight()));
                     }
                 }
                 // if the variants are apart on *all* alternate haplotypes, record that fact
                 else if ( haplotypesWithCall.size() + haplotypesWithComp.size() == totalAvailableHaplotypes ) {
-                    if ( intersectionHaplotype.isEmpty() ) {
+                    if ( intersectionHaplotype.isEmpty() && ! phaseSetMapping.containsKey(call) ) {
                         // create a new group if these are the first entries
-                        if ( ! phaseSetMapping.containsKey(call) ) {
-                            // note that if the comp is already in the map then that is very bad because it means that there is
-                            // another variant that is in phase with the comp but not with the call.  Since that's an un-phasable
-                            // situation, we should abort if we encounter it.
-                            if ( phaseSetMapping.containsKey(comp) ) {
-                                phaseSetMapping.clear();
-                                return phaseSetMapping;
-                            }
+                        final int minWeakness = phaseSetMapping.values().stream().mapToInt(Triple::getMiddle).min().orElse(0);
+                        if (uniqueCounter < 2 || phaseReadsCount > minWeakness) {
+                            if (uniqueCounter > 1) { phaseSetMapping.entrySet().removeIf(entry -> entry.getValue().getMiddle() <= minWeakness); }
 
-                            phaseSetMapping.put(call, Triple.of(uniqueCounter, phaseReadsCount, PhaseGroup.PHASE_01));
-                            phaseSetMapping.put(comp, Triple.of(uniqueCounter, phaseReadsCount, PhaseGroup.PHASE_10));
+                            final PhaseGroup phaseGroup = phaseSetMapping.values().stream().findFirst().orElse(initPhase).getRight() == PhaseGroup.PHASE_10 ? PhaseGroup.PHASE_01 : PhaseGroup.PHASE_10;
+                            phaseSetMapping.put(call, Triple.of(uniqueCounter, phaseReadsCount, phaseGroup));
                             uniqueCounter++;
-                        }
-                        // otherwise it's part of an existing group so use that group's unique ID
-                        else if ( ! phaseSetMapping.containsKey(comp) ){
-                            final Triple<Integer, Integer, PhaseGroup> callPhase = phaseSetMapping.get(call);
-                            phaseSetMapping.put(comp, Triple.of(callPhase.getLeft(), phaseReadsCount, callPhase.getRight().equals(PhaseGroup.PHASE_01) ? PhaseGroup.PHASE_10 : PhaseGroup.PHASE_01));
                         }
                     }
                 }
@@ -948,9 +931,9 @@ public final class AssemblyBasedCallerUtils {
                     indexes.add(index);
                 }
             }
-            if ( indexes.size() < 2 ) {
-                throw new IllegalStateException("Somehow we have a group of phased variants that has fewer than 2 members");
-            }
+            // if ( indexes.size() < 2 ) {
+            //     throw new IllegalStateException("Somehow we have a group of phased variants that has fewer than 2 members");
+            // }
 
             // create a unique ID based on the leftmost one
             final String uniqueID = createUniqueID(originalCalls.get(indexes.get(0)));
