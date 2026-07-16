@@ -931,9 +931,7 @@ public final class AssemblyBasedCallerUtils {
                     indexes.add(index);
                 }
             }
-            // if ( indexes.size() < 2 ) {
-            //     throw new IllegalStateException("Somehow we have a group of phased variants that has fewer than 2 members");
-            // }
+            if ( indexes.isEmpty() ) continue;
 
             // create a unique ID based on the leftmost one
             final String uniqueID = createUniqueID(originalCalls.get(indexes.get(0)));
